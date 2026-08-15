@@ -140,6 +140,10 @@ One page of rules every zone follows:
    bounded swath is exactly what gets annotated.
 4. Every annotation is an agent request; the sidebar is the thread list.
 
+#### Cross-surface standard
+
+The Core pointer page is [Annotate-Agent UX](../docs/annotate-agent-ux.md).
+
 ## Styling: self-contained by design
 
 All load-bearing visuals (rings, chip, popover, drag ring) ship in an injected
