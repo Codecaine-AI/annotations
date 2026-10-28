@@ -142,7 +142,7 @@ One page of rules every zone follows:
 
 #### Cross-surface standard
 
-The Core pointer page is [Annotate-Agent UX](../docs/annotate-agent-ux.md).
+The Core pointer page is [Annotate-Agent UX](https://github.com/Codecaine-AI/codecaine-core/blob/main/docs/annotate-agent-ux.md).
 
 ## Styling: self-contained by design
 
