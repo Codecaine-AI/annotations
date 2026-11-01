@@ -320,7 +320,10 @@ export class Dispatcher {
       case "idle":
         return;
       case "in-flight":
-        return this.complete({ target, annotations, annotation, delivery: state.delivery, threadId: state.threadId });
+        await this.complete({ target, annotations, annotation, delivery: state.delivery, threadId: state.threadId });
+        // A reply that landed while the delivery was in flight is pending now, so look again.
+        this.enqueue(target);
+        return;
       case "pending": {
         const title = await docs.pageTitle(target.path);
         const existing = await this.liveThread(annotations, title);
