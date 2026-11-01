@@ -6,7 +6,11 @@
  * Tests can also inject faults (a bind that fails, a page whose doc cannot be
  * read), hook the moment a reply lands, and count reads per page.
  */
-import type { Annotation, AnnotationIntent, DocsChangeEvent } from "../src/docs";
+import type { DocsChangeEvent } from "../src/docs";
+import type { Annotation as SourceAnnotation } from "../src/source";
+
+type Annotation = SourceAnnotation & { author: string };
+type AnnotationIntent = "note" | "agent-request";
 
 type Page = { title: string; annotations: Annotation[] };
 type Waiter = { predicate: () => boolean; resolve: () => void };

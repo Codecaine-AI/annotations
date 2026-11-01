@@ -1,47 +1,33 @@
 /**
- * HTTP client for one docs project served by docs-server (`/api/*` routes),
+ * The docs surface: one docs project served by docs-server (`/api/*` routes),
  * including its SSE change stream. The route shapes mirror
  * docs-system/packages/docs-server/src/routes.ts.
  */
-
-export type AnnotationIntent = "note" | "agent-request";
-export type AnnotationReply = { id: string; author: string; body: string; createdAt: string };
-export type AnnotationThread = { id: string; title?: string };
-export type Annotation = {
-  id: string;
-  body: string;
-  intent: AnnotationIntent;
-  author: string;
-  status: "open" | "resolved";
-  createdAt: string;
-  replies?: AnnotationReply[];
-  thread?: AnnotationThread;
-};
+import {
+  DISPATCHER_ACTOR,
+  messageTail,
+  requestJson,
+  sseJson,
+  SYSTEM_AUTHOR,
+  type Annotation,
+  type AnnotationChange,
+  type AnnotationThread,
+  type RequestFacts,
+  type Source,
+  type SourceEvent,
+} from "./source";
 
 export type DocsChangeEvent = {
   path: string;
   changedIds: string[];
   patchId: string;
   actor: string;
-  annotation?: { id: string; intent: AnnotationIntent; change: "created" | "replied" | "resolved" | "thread" };
+  annotation?: { id: string; intent: string; change: AnnotationChange };
 };
-
-export type DocsStreamItem = { kind: "open" } | { kind: "change"; event: DocsChangeEvent };
 
 type TreeNode = { name: string; path: string; kind: "dir" | "file" | "bundle"; children?: TreeNode[] };
 
 export type DocsEndpoint = { url: string; token?: string };
-
-export class DocsRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly method: string,
-    readonly route: string,
-    detail: string,
-  ) {
-    super(`${method} ${route} -> ${status} ${detail}`);
-  }
-}
 
 /** Resolves the project API base URL: an explicit url, or the daemon state file plus a project id. */
 export async function resolveDocsEndpoint(config: {
@@ -55,41 +41,24 @@ export async function resolveDocsEndpoint(config: {
   return { url: `${state.url.replace(/\/+$/, "")}/projects/${config.docsProject}`, token: state.token };
 }
 
-export class DocsClient {
+/** Targets are page paths. */
+export class DocsSource implements Source {
+  readonly surface = "docs";
   private endpoint: DocsEndpoint | null = null;
 
-  constructor(private readonly resolve: () => Promise<DocsEndpoint>) {}
-
-  /** Re-reads the endpoint. Called before each stream connect, so a restarted daemon's new token is picked up. */
-  async refresh(): Promise<DocsEndpoint> {
-    this.endpoint = await this.resolve();
-    return this.endpoint;
-  }
-
-  private async current(): Promise<DocsEndpoint> {
-    return this.endpoint ?? (await this.refresh());
-  }
-
-  private headers(endpoint: DocsEndpoint, extra: Record<string, string> = {}): Record<string, string> {
-    return endpoint.token ? { ...extra, authorization: `Bearer ${endpoint.token}` } : extra;
-  }
+  constructor(
+    private readonly resolve: () => Promise<DocsEndpoint>,
+    readonly t3Project: string,
+  ) {}
 
   private async request<T>(method: string, route: string, body?: unknown): Promise<T> {
-    const endpoint = await this.current();
-    const response = await fetch(`${endpoint.url}${route}`, {
-      method,
-      headers: this.headers(endpoint, body === undefined ? {} : { "content-type": "application/json" }),
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new DocsRequestError(response.status, method, route, text.slice(0, 300));
-    }
-    return (await response.json()) as T;
+    const endpoint = this.endpoint ?? (this.endpoint = await this.resolve());
+    const { data } = await requestJson<T>(`${endpoint.url}${route}`, route, { method, headers: auth(endpoint), body });
+    return data;
   }
 
   /** Every doc bundle path in the project, depth first. */
-  async bundlePaths(): Promise<string[]> {
+  async targets(): Promise<string[]> {
     const { tree } = await this.request<{ tree: TreeNode[] }>("GET", "/api/tree");
     const paths: string[] = [];
     const walk = (nodes: TreeNode[]) => {
@@ -103,7 +72,7 @@ export class DocsClient {
   }
 
   /** The page title from its doc, or the path when the doc has none. */
-  async pageTitle(path: string): Promise<string> {
+  async title(path: string): Promise<string> {
     const bundle = await this.request<{ doc?: { title?: unknown } }>("GET", `/api/bundle?path=${encodeURIComponent(path)}`);
     const title = bundle.doc?.title;
     return typeof title === "string" && title.trim().length > 0 ? title.trim() : path;
@@ -117,76 +86,59 @@ export class DocsClient {
     return result.annotations.annotations;
   }
 
-  async setThread(path: string, annotationId: string, thread: AnnotationThread, sessionId: string): Promise<void> {
+  async setThread(path: string, annotationId: string, thread: AnnotationThread): Promise<void> {
     await this.request("PUT", `/api/annotations/${encodeURIComponent(annotationId)}/thread`, {
       path,
       thread,
-      session_id: sessionId,
+      session_id: DISPATCHER_ACTOR,
     });
   }
 
-  async reply(path: string, annotationId: string, body: string, author: string, sessionId: string): Promise<void> {
+  async reply(path: string, annotationId: string, body: string): Promise<void> {
     await this.request("POST", `/api/annotations/${encodeURIComponent(annotationId)}/replies`, {
       path,
       body,
-      author,
-      session_id: sessionId,
+      author: SYSTEM_AUTHOR,
+      session_id: DISPATCHER_ACTOR,
     });
   }
 
-  /**
-   * The SSE change stream. Yields `open` once the server's first frame
-   * arrives, then one `change` per event. Returns when the connection closes
-   * and throws when it cannot be opened; the caller reconnects.
-   */
-  async *events(signal: AbortSignal): AsyncGenerator<DocsStreamItem> {
-    const endpoint = await this.current();
-    const response = await fetch(`${endpoint.url}/api/events`, {
-      headers: this.headers(endpoint, { accept: "text/event-stream" }),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new DocsRequestError(response.status, "GET", "/api/events", await response.text().catch(() => ""));
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffered = "";
-    let opened = false;
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) return;
-        buffered += decoder.decode(chunk.value, { stream: true });
-        let boundary: number;
-        while ((boundary = buffered.indexOf("\n\n")) !== -1) {
-          const frame = buffered.slice(0, boundary);
-          buffered = buffered.slice(boundary + 2);
-          if (!opened) {
-            opened = true;
-            yield { kind: "open" };
-          }
-          const event = parseFrame(frame);
-          if (event) yield { kind: "change", event };
-        }
+  /** Re-reads the daemon state on every connect, because the token changes when the daemon restarts. */
+  async *events(signal: AbortSignal): AsyncGenerator<SourceEvent> {
+    const endpoint = (this.endpoint = await this.resolve());
+    for await (const payload of sseJson(`${endpoint.url}/api/events`, "/api/events", auth(endpoint), signal)) {
+      if (payload === null) {
+        yield { kind: "open" };
+        continue;
       }
-    } finally {
-      await reader.cancel().catch(() => {});
+      const event = payload as DocsChangeEvent;
+      if (event.annotation) {
+        const { id, intent, change } = event.annotation;
+        yield { kind: "annotation", target: event.path, annotationId: id, intent, change, actor: event.actor };
+      } else if (event.path && event.actor !== DISPATCHER_ACTOR) {
+        // A plain change event, such as the file watcher's, says only which
+        // page changed. Re-reading its annotations covers requests written
+        // outside the API, for instance through the docs MCP in another process.
+        yield { kind: "touched", target: event.path };
+      }
     }
+  }
+
+  message(facts: RequestFacts): string {
+    const lead =
+      facts.kind === "created"
+        ? `A human filed a request on the docs page "${facts.title}" (${facts.target}).`
+        : `A human replied on the docs page "${facts.title}" (${facts.target}).`;
+    return [
+      "Load the docs-system skill before you start.",
+      "",
+      lead,
+      `Read the page with the docs MCP tools, do the work, then answer through the docs MCP annotation tools: reply with docs_annotation_reply using author "agent" and annotation_id "${facts.annotationId}", and resolve the annotation with docs_annotation_resolve when the request is done.`,
+      ...messageTail(facts, [`Page: ${facts.target}`]),
+    ].join("\n");
   }
 }
 
-/** One SSE frame to a change event. Named frames (connected, keepalive) and non-JSON data are skipped. */
-function parseFrame(frame: string): DocsChangeEvent | null {
-  const data: string[] = [];
-  for (const line of frame.split("\n")) {
-    if (line.startsWith("event:")) return null;
-    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-  }
-  const text = data.join("\n");
-  if (!text.startsWith("{")) return null;
-  try {
-    return JSON.parse(text) as DocsChangeEvent;
-  } catch {
-    return null;
-  }
+function auth(endpoint: DocsEndpoint): Record<string, string> {
+  return endpoint.token ? { authorization: `Bearer ${endpoint.token}` } : {};
 }

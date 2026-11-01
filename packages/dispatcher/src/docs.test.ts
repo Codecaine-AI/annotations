@@ -11,7 +11,7 @@ if (GlobalRegistrator.isRegistered) await GlobalRegistrator.unregister();
 
 import { FakeDocs } from "../test/fake-docs-server";
 import { Dispatcher, MARKER } from "./dispatcher";
-import { DocsClient } from "./docs";
+import { DocsSource } from "./docs";
 import { T3 } from "./t3";
 
 const PROJECT = "/repo/knowledge-base";
@@ -47,9 +47,8 @@ const sentMarkers = (annotationId: string) =>
 async function startDispatcher(options: { retryMs?: number } = {}): Promise<() => Promise<void>> {
   const controller = new AbortController();
   const dispatcher = new Dispatcher({
-    docs: new DocsClient(async () => ({ url: fake.url })),
+    sources: [new DocsSource(async () => ({ url: fake.url }), PROJECT)],
     t3: new T3("t3", MODEL),
-    t3Project: PROJECT,
     log: () => {},
     retryMs: options.retryMs,
   });
