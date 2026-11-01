@@ -97,9 +97,11 @@ with `launchctl kickstart -k gui/$(id -u)/ai.codecaine.dispatcher`.
   delivery was handed to T3 and finish only the studio writes. A `Sending`
   marker with no `Sent` after it is completed on restart without a second
   turn, with a note on the `Sent` marker, except for a new thread that T3 does
-  not list: that start never happened and runs now. Canvas has no reply
-  route, so the dispatcher reads the board and saves it with the reply added
-  and `If-Match` set to the hash it read. A save that lands in between answers
+  not list: that start never happened and runs now. Every surface gets the
+  same two markers through its own reply write: the reply route on docs and
+  Prompt Kit, and a board save on canvas. Canvas has no reply route, so the
+  dispatcher reads the board and saves it with the reply added and
+  `If-Match` set to the hash it read. A save that lands in between answers
   412, and the dispatcher reads and tries again, up to 3 times.
 - **Replay.** On every stream connect it scans that surface for pending and
   in-flight deliveries, because no stream replays.

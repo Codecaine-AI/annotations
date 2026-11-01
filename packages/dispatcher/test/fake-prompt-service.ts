@@ -4,6 +4,9 @@
  * of prompt-kit-mcp/src/daemon.ts and prompt-kit-server/src/annotation-routes.ts.
  * It writes its `{ url, token }` state file like the daemon, and `restart`
  * changes the token and drops every stream, as a daemon restart does.
+ *
+ * Tests can also inject faults (a bind that fails, a prompt that refuses
+ * `system` replies) and hook the moment a reply lands.
  */
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -39,6 +42,13 @@ export class FakePromptService {
   private subscribeWaiters: (() => void)[] = [];
   private counter = 0;
   unauthorized = 0;
+  /** Called before a reply is appended, with the annotation and the reply body. A test uses it to act inside a dispatch's window. */
+  beforeReply: ((annotation: PromptAnnotation, body: string) => void) | null = null;
+  /** How many thread binds this server has refused so far. */
+  rejectedBinds = 0;
+  private bindFailuresLeft = 0;
+  private readonly refusingReplies = new Set<string>();
+  private readonly refusedRepliesAt = new Map<string, number[]>();
 
   constructor(
     readonly root: string,
@@ -90,6 +100,30 @@ export class FakePromptService {
     const annotation = this.create(input.body, input.intent ?? "agent-request", "ford", input.status);
     this.prompt(path).annotations.push(annotation);
     return annotation;
+  }
+
+  /** Appends a reply and emits its event without an HTTP round trip, for use inside `beforeReply`. */
+  inject(path: string, annotationId: string, body: string, author: string): void {
+    const annotation = this.prompt(path).annotations.find((item) => item.id === annotationId);
+    if (!annotation) throw new Error(`no annotation ${annotationId} on ${path}`);
+    this.addReply(path, annotation, body, author);
+  }
+
+  // -- faults and counters -----------------------------------------------------
+
+  /** The next `count` thread binds answer 500. */
+  failNextBinds(count: number): void {
+    this.bindFailuresLeft = count;
+  }
+
+  /** `system` replies on this prompt answer 500 from now on. */
+  refuseReplies(path: string): void {
+    this.refusingReplies.add(path);
+  }
+
+  /** When each refused `system` reply on the prompt arrived, in ms. */
+  refusedReplies(path: string): number[] {
+    return this.refusedRepliesAt.get(path) ?? [];
   }
 
   // -- client helpers: the calls Prompt Studio proxies ---------------------------
@@ -150,12 +184,28 @@ export class FakePromptService {
     const event = { root: this.root, path, annotationId: annotation.id, change, intent: annotation.intent, status: annotation.status, thread: annotation.thread ?? null, hash: `pka1-${this.counter}`, actor };
     const frame = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
     for (const controller of this.subscribers) controller.enqueue(frame);
+    this.wake();
+  }
+
+  private wake(): void {
     const ready = this.waiters.filter((waiter) => waiter.predicate());
     this.waiters = this.waiters.filter((waiter) => !ready.includes(waiter));
     for (const waiter of ready) waiter.resolve();
   }
 
+  private addReply(path: string, annotation: PromptAnnotation, body: string, author: string): void {
+    this.counter += 1;
+    annotation.replies = [...(annotation.replies ?? []), { id: `reply-${this.counter}`, author, body, createdAt: new Date().toISOString() }];
+    this.emit(path, annotation, "replied", author);
+  }
+
   private async handle(request: Request): Promise<Response> {
+    const response = await this.route(request);
+    this.wake();
+    return response;
+  }
+
+  private async route(request: Request): Promise<Response> {
     if (request.headers.get("authorization") !== `Bearer ${this.token}`) {
       this.unauthorized += 1;
       return new Response("Unauthorized", { status: 401 });
@@ -186,10 +236,14 @@ export class FakePromptService {
     const annotation = prompt.annotations.find((item) => item.id === decodeURIComponent(match[1] ?? ""));
     if (!annotation) return Response.json({ detail: "annotation not found" }, { status: 404 });
     if (match[2] === "replies" && request.method === "POST") {
-      this.counter += 1;
       const author = typeof body.author === "string" ? body.author : "anonymous";
-      annotation.replies = [...(annotation.replies ?? []), { id: `reply-${this.counter}`, author, body: String(body.body), createdAt: new Date().toISOString() }];
-      this.emit(path, annotation, "replied", author);
+      const replyBody = String(body.body);
+      if (author === "system" && this.refusingReplies.has(path)) {
+        this.refusedRepliesAt.set(path, [...this.refusedReplies(path), Date.now()]);
+        return Response.json({ detail: "Injected failure" }, { status: 500 });
+      }
+      this.beforeReply?.(annotation, replyBody);
+      this.addReply(path, annotation, replyBody, author);
       return Response.json({ annotation, ...snapshot() });
     }
     if (match[2] === "resolve" && request.method === "POST") {
@@ -198,6 +252,11 @@ export class FakePromptService {
       return Response.json({ annotation, ...snapshot() });
     }
     if (match[2] === "thread" && request.method === "PUT") {
+      if (this.bindFailuresLeft > 0) {
+        this.bindFailuresLeft -= 1;
+        this.rejectedBinds += 1;
+        return Response.json({ detail: "Injected failure" }, { status: 500 });
+      }
       const thread = body.thread as AnnotationThread | null;
       if (thread) annotation.thread = thread;
       else delete annotation.thread;
