@@ -57,6 +57,7 @@ export type Query = {
   since?: string | Date;
   /** Exclusive upper bound. */
   until?: string | Date;
+  /** Rows returned at most. Defaults to `QUERY_LIMIT`; must be a positive whole number. */
   limit?: number;
 };
 
@@ -64,6 +65,9 @@ export type Identity = { threadId: string | null; agent: string | null };
 
 /** `result` is cut to this many characters so a payload cannot land in the log by mistake. */
 export const RESULT_LIMIT = 500;
+
+/** Rows a query returns when the caller sets no limit, so one read of a large log never blocks a daemon. */
+export const QUERY_LIMIT = 1000;
 
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -110,7 +114,7 @@ export class ActionLog {
     for (const field of ["runId", "agent", "tool", "target"] as const) {
       if (!record[field]) throw new Error(`action log record needs a ${field}`);
     }
-    const result = record.result.length > RESULT_LIMIT ? `${record.result.slice(0, RESULT_LIMIT)}…` : record.result;
+    const result = record.result.length > RESULT_LIMIT ? `${record.result.slice(0, RESULT_LIMIT - 1)}…` : record.result;
     const inserted = this.db.run(
       "INSERT INTO records (run_id, thread_id, agent, tool, target, result, snapshot_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [record.runId, record.threadId ?? null, record.agent, record.tool, record.target, result, record.snapshotId ?? null, iso(record.at)],
@@ -131,8 +135,10 @@ export class ActionLog {
     return bound!.thread_id;
   }
 
-  /** Records matching every given filter, oldest first. */
+  /** Records matching every given filter, oldest first, at most `limit` rows (default `QUERY_LIMIT`). */
   query(filter: Query = {}): StoredRecord[] {
+    const limit = filter.limit ?? QUERY_LIMIT;
+    if (!Number.isInteger(limit) || limit < 1) throw new Error(`limit must be a positive whole number, got ${String(filter.limit)}`);
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (filter.threadId !== undefined) { where.push("thread_id = ?"); params.push(filter.threadId); }
@@ -140,9 +146,8 @@ export class ActionLog {
     if (filter.runId !== undefined) { where.push("run_id = ?"); params.push(filter.runId); }
     if (filter.since !== undefined) { where.push("at >= ?"); params.push(iso(filter.since)); }
     if (filter.until !== undefined) { where.push("at < ?"); params.push(iso(filter.until)); }
-    const limit = filter.limit === undefined ? "" : " LIMIT ?";
-    if (filter.limit !== undefined) params.push(filter.limit);
-    const sql = `SELECT * FROM actions${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY at, id${limit}`;
+    params.push(limit);
+    const sql = `SELECT * FROM actions${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY at, id LIMIT ?`;
     return this.db.query<Row, (string | number)[]>(sql).all(...params).map(fromRow);
   }
 

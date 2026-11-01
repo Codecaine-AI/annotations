@@ -119,7 +119,7 @@ log.bindThread(runId, threadIdFromBeginTool); // idempotent, first binding wins
 
 log.query({ threadId });                      // StoredRecord[], oldest first
 log.query({ target, since: "2026-11-01T00:00:00Z", until: new Date() });
-log.query({ runId, limit: 100 });
+log.query({ runId, limit: 100 }); // limit defaults to 1000 and must be a positive whole number
 ```
 
 `since` is inclusive and `until` is exclusive. Filters combine with AND.

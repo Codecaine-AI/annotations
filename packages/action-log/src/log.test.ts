@@ -9,7 +9,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 // processes and read their streams, so they need Bun's own Response back.
 if (GlobalRegistrator.isRegistered) await GlobalRegistrator.unregister();
 
-import { identityFromEnv, openActionLog, type ActionLog, RESULT_LIMIT } from "./log";
+import { identityFromEnv, openActionLog, type ActionLog, QUERY_LIMIT, RESULT_LIMIT } from "./log";
 import { SCHEMA_VERSION } from "./schema";
 
 const THREAD_A = "f571f4c5-f879-4ca0-86e6-9e56c3555765";
@@ -99,6 +99,10 @@ test("two processes appending at once lose nothing", async () => {
   expect(log.query({ runId: "run-1" })).toHaveLength(500);
   expect(log.query({ runId: "run-2" })).toHaveLength(500);
   expect(log.query({ target: "docs/shared" })).toHaveLength(1000);
+  log.record({ runId: "run-3", agent: "claude-code", tool: "docs_read", target: "docs/shared", result: "ok", at: T0 });
+  expect(log.query({ target: "docs/shared" })).toHaveLength(QUERY_LIMIT);
+  expect(log.query({ target: "docs/shared", limit: 1001 })).toHaveLength(1001);
+  expect(() => log.query({ limit: 0 })).toThrow("positive whole number");
 }, 30_000);
 
 test("opening creates the folder and the versioned schema, and reopening keeps the records", () => {
@@ -117,7 +121,7 @@ test("opening creates the folder and the versioned schema, and reopening keeps t
 test("a result longer than the limit is cut, and a record without its identity fields is refused", () => {
   const log = openTemp();
   log.record({ runId: "run-l", agent: "claude-code", tool: "docs_read", target: "docs/page", result: "x".repeat(RESULT_LIMIT + 50), at: T0 });
-  expect(log.query()[0]?.result).toHaveLength(RESULT_LIMIT + 1);
+  expect(log.query()[0]?.result).toHaveLength(RESULT_LIMIT);
   expect(() => log.record({ runId: "", agent: "claude-code", tool: "docs_read", target: "docs/page", result: "ok", at: T0 })).toThrow("needs a runId");
   expect(() => log.record({ runId: "run-l", agent: "claude-code", tool: "docs_read", target: "docs/page", result: "ok", at: "soon" })).toThrow("not a time");
 });
