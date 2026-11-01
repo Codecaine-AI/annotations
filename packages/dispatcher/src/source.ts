@@ -69,6 +69,7 @@ export const SYSTEM_AUTHOR = "system";
 export function messageTail(facts: RequestFacts, where: string[]): string[] {
   return [
     "Replies with author \"agent\" stay in the studio and are not sent back to this thread. A human reply on the annotation reaches this thread as a new message.",
+    "If your harness does not set T3CODE_THREAD_ID (Codex does not), pass this thread's id as thread_id to canvas_open, docs_begin or prompts_begin, so the action log joins your edits to this thread.",
     "",
     `Annotation: ${facts.annotationId}`,
     ...where,
