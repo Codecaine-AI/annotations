@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.codecaine.dispatcher</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__BUN__</string>
+		<string>run</string>
+		<string>__PACKAGE__/src/main.ts</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>DISPATCHER_CONFIG</key>
+		<string>__CONFIG__</string>
+		<key>PATH</key>
+		<string>__PATH__</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>__PACKAGE__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>__LOG__</string>
+	<key>StandardErrorPath</key>
+	<string>__LOG__</string>
+</dict>
+</plist>
