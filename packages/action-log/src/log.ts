@@ -29,7 +29,7 @@ export type ActionRecord = {
   tool: string;
   /** The board id, page path or prompt path the call acted on. */
   target: string;
-  /** A short outcome summary, such as `ok`, `refused: stale revision` or `2 findings`. Never a payload. */
+  /** A short outcome summary, such as `ok`, `refused` or `2 findings`. Never a payload, and never error text that can echo one. */
   result: string;
   /** The guidance snapshot id the server served, when the call had one. */
   snapshotId?: string | null;
