@@ -53,19 +53,33 @@ with `launchctl kickstart -k gui/$(id -u)/ai.codecaine.dispatcher`.
   dispatcher itself (`session_id` `dispatcher`).
 - **What is pending.** Read from the annotation's own replies, so a restart
   needs no state file. Authors `agent` and `system` are machine replies, every
-  other author is a person. With no dispatcher reply yet, an open request is
-  new. With one, the human replies after the last machine reply are the
-  follow-up.
+  other author is a person. Each dispatcher marker names its delivery:
+  `Delivery: reply <id>.` for the newest human reply it carried, or
+  `Delivery: request.` for the body alone. The human replies after the last
+  `Sent` marker's delivery are pending, whatever agent replies or later markers
+  sit around them. With no marker yet, an open request is new and its text is
+  the body plus any human replies so far.
 - **Which thread.** The newest `thread` field among the page's annotations,
   when `t3 thread show` confirms it still exists. Else a project thread with
   the page's title from `t3 thread list`. Else `t3 thread start`.
-- **What it writes.** The thread id into the annotation's `thread` field
-  (`PUT /api/annotations/:id/thread`), and a `system` reply
-  `Sent to T3 thread "<title>" (t3-thread://v1/<id>).` on the annotation.
-- **Replay.** On every stream connect it scans every page for pending requests,
-  because the stream has no replay.
-- **Failure.** A failed dispatch is retried after 5 seconds. A dropped stream
-  reconnects after 2 seconds and re-reads the daemon state file.
+- **What it writes, in order.** First a `system` reply
+  `Sending to T3 thread "<title>" (t3-thread://v1/<id>). Delivery: ...` (or
+  `Sending to T3 as a new thread "<title>". ...`), then the T3 call, then the
+  thread id into the annotation's `thread` field
+  (`PUT /api/annotations/:id/thread`), then the `system` reply
+  `Sent to T3 thread "<title>" (t3-thread://v1/<id>). Delivery: ...`. The
+  `Sending` marker goes down before the T3 call so a restart can tell that a
+  delivery was handed to T3 and finish only the Docs writes. A `Sending`
+  marker with no `Sent` after it is completed on restart without a second
+  turn, with a note on the `Sent` marker, except for a new thread that T3 does
+  not list: that start never happened and runs now.
+- **Replay.** On every stream connect it scans every page for pending and
+  in-flight deliveries, because the stream has no replay.
+- **Failure.** A failed dispatch is retried after 5 seconds, doubling per
+  failure up to 5 minutes, on one timer per annotation. A new event for an
+  annotation in backoff waits for that timer. A retry after T3 accepted the
+  turn redoes only the Docs writes. A dropped stream reconnects after 2
+  seconds and re-reads the daemon state file.
 
 ## Tests
 
