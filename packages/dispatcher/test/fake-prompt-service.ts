@@ -42,6 +42,8 @@ export class FakePromptService {
   private subscribeWaiters: (() => void)[] = [];
   private counter = 0;
   unauthorized = 0;
+  /** How many `/rpc` calls (catalog discoveries) this server has answered. */
+  rpcCalls = 0;
   /** Called before a reply is appended, with the annotation and the reply body. A test uses it to act inside a dispatch's window. */
   beforeReply: ((annotation: PromptAnnotation, body: string) => void) | null = null;
   /** How many thread binds this server has refused so far. */
@@ -107,6 +109,14 @@ export class FakePromptService {
     const annotation = this.prompt(path).annotations.find((item) => item.id === annotationId);
     if (!annotation) throw new Error(`no annotation ${annotationId} on ${path}`);
     this.addReply(path, annotation, body, author);
+  }
+
+  /** Emits a `created` request event for a prompt under another root, as the service does for every root it serves. */
+  emitForeign(root: string, path: string): void {
+    this.counter += 1;
+    const event = { root, path, annotationId: `foreign-${this.counter}`, change: "created", intent: "agent-request", status: "open", thread: null, hash: `pka1-${this.counter}`, actor: "ford" };
+    const frame = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+    for (const controller of this.subscribers) controller.enqueue(frame);
   }
 
   // -- faults and counters -----------------------------------------------------
@@ -213,6 +223,7 @@ export class FakePromptService {
     const url = new URL(request.url);
     if (url.pathname === "/api/events" && request.method === "GET") return this.stream();
     if (url.pathname === "/rpc" && request.method === "POST") {
+      this.rpcCalls += 1;
       const call = (await request.json()) as { name: string };
       if (call.name !== "prompts_discover") return Response.json({ structuredContent: { ok: false, detail: "unknown tool" }, isError: true });
       const prompts = [...this.prompts.values()].map(({ id, title, path }) => ({ id, title, target: { promptPath: path } }));

@@ -60,7 +60,7 @@ test("a board request starts a thread in the canvas project, binds it, and posts
 
   const start = t3.callsOf("start")[0];
   expect(start?.args.slice(0, 4)).toEqual(["thread", "start", PROJECT, "-"]);
-  expect(flag(start, "--title")).toBe(TITLE);
+  expect(flag(start, "--title")).toBe(`${TITLE} · canvas`);
   expect(flag(start, "--provider")).toBe(MODEL.provider);
   expect(flag(start, "--model")).toBe(MODEL.model);
   for (const fact of ["Load the canvas skill", id, BOARD, `${fake.dir}/${BOARD}.canvas.json`, "Group the retry boxes", "reply_annotation", "resolve_request"]) {
@@ -70,7 +70,7 @@ test("a board request starts a thread in the canvas project, binds it, and posts
   const annotation = fake.annotation(id);
   const threadId = annotation.thread?.id ?? "";
   expect(threadId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(annotation.thread).toEqual({ id: threadId, title: TITLE });
+  expect(annotation.thread).toEqual({ id: threadId, title: `${TITLE} · canvas` });
   expect(annotation.status).toBe("open");
   expect(sentMarkers(id)[0]?.body).toContain(`t3-thread://v1/${threadId}`);
 });
@@ -114,9 +114,9 @@ test("on start it dispatches a board request filed while it was down and leaves 
 
   const start = t3.callsOf("start").at(-1);
   expect(t3.callsOf("start")).toHaveLength(2);
-  expect(flag(start, "--title")).toBe(OTHER_TITLE);
+  expect(flag(start, "--title")).toBe(`${OTHER_TITLE} · canvas`);
   expect(start?.stdin).toContain("Add the refresh token path");
-  expect(fake.annotation(pending.id).thread?.title).toBe(OTHER_TITLE);
+  expect(fake.annotation(pending.id).thread?.title).toBe(`${OTHER_TITLE} · canvas`);
   expect(fake.annotation(resolved.id).thread).toBeUndefined();
   expect(fake.annotation(note.id).thread).toBeUndefined();
 });

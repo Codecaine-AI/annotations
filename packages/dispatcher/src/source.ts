@@ -1,3 +1,5 @@
+import type { Surface } from "./config";
+
 /**
  * What the dispatcher needs from one studio surface (docs, canvas, prompt):
  * its request events, its annotation store, and the first message a thread
@@ -39,8 +41,8 @@ export type RequestFacts = {
 };
 
 export interface Source {
-  /** Log prefix and queue namespace. */
-  readonly surface: string;
+  /** Log prefix, queue namespace and thread title suffix. */
+  readonly surface: Surface;
   /** The T3 project that owns this surface's targets. */
   readonly t3Project: string;
   /** One stream connection: re-reads the endpoint and token, yields `open` first. Returns when the stream closes. */

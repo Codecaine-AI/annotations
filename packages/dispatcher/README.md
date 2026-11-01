@@ -20,7 +20,7 @@ lookup, the `t3` calls and the backoff are shared (`src/dispatcher.ts`).
 | Store | docs-server annotation routes | Studio file API, writes with `If-Match` | Prompt service annotation routes, bearer token |
 | Startup scan | every page in `/api/tree` | every board in `/api/canvases` | every prompt `prompts_discover` finds in `promptWorkspace` |
 | T3 project | `t3Project`: the repo that owns the pages | `canvasT3Project`: the canvas repo | `promptT3Project`: the prompt-kit repo |
-| Thread title | the page title | the board title | the prompt title from the catalog |
+| Thread title | `<page title> · docs` | `<board title> · canvas` | `<prompt title from the catalog> · prompt` |
 | Skill | `docs-system` | `canvas` | `prompt-kit` |
 | Agent answers with | `docs_annotation_reply`, `docs_annotation_resolve` | `reply_annotation`, `resolve_request` | `prompts_request_reply`, `prompts_request_resolve` |
 
@@ -86,8 +86,11 @@ with `launchctl kickstart -k gui/$(id -u)/ai.codecaine.dispatcher`.
   the body plus any human replies so far.
 - **Which thread.** The newest `thread` field among the page's, board's or
   prompt's annotations, when `t3 thread show` confirms it still exists. Else a
-  thread in the surface's T3 project with the same title from
-  `t3 thread list`. Else `t3 thread start`.
+  thread in the surface's T3 project with the same thread title, surface
+  suffix included, from `t3 thread list`. Else `t3 thread start`. The suffix
+  keeps a page and a board with the same title in one T3 project on separate
+  threads. `threadTitle` in `src/dispatcher.ts` builds the title for the
+  markers, the start call, the `thread` field and the list match.
 - **What it writes, in order.** First a `system` reply
   `Sending to T3 thread "<title>" (t3-thread://v1/<id>). Delivery: ...` (or
   `Sending to T3 as a new thread "<title>". ...`), then the T3 call, then the

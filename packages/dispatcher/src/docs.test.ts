@@ -80,7 +80,7 @@ test("a request on a page with no thread starts one, binds it, and tells the Lab
 
   const start = callsOf("start")[0];
   expect(start?.args.slice(0, 4)).toEqual(["thread", "start", PROJECT, "-"]);
-  expect(start?.args[start.args.indexOf("--title") + 1]).toBe(TITLE);
+  expect(start?.args[start.args.indexOf("--title") + 1]).toBe(`${TITLE} · docs`);
   expect(start?.args[start.args.indexOf("--provider") + 1]).toBe(MODEL.provider);
   expect(start?.args[start.args.indexOf("--model") + 1]).toBe(MODEL.model);
   for (const fact of ["docs-system", id, PAGE, "Rewrite the intro", "docs_annotation_reply"]) {
@@ -90,7 +90,7 @@ test("a request on a page with no thread starts one, binds it, and tells the Lab
   const annotation = fake.annotation(id);
   const threadId = annotation.thread?.id ?? "";
   expect(threadId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(annotation.thread).toEqual({ id: threadId, title: TITLE });
+  expect(annotation.thread).toEqual({ id: threadId, title: `${TITLE} · docs` });
   expect(annotation.status).toBe("open");
   expect(sentMarkers(id)[0]?.body).toContain(threadId);
 });
@@ -151,14 +151,14 @@ test("on start it dispatches open requests filed while it was down and reuses a 
   const pending = fake.seed(SETUP_PAGE, { body: "Document the install", intent: "agent-request", author: "ford" });
   const resolved = fake.seed(SETUP_PAGE, { body: "Old request", intent: "agent-request", author: "ford", status: "resolved" });
   const note = fake.seed(SETUP_PAGE, { body: "Just a note", intent: "note", author: "ford" });
-  const handMade = { threadId: "11111111-2222-4333-8444-555555555555", title: SETUP_TITLE, status: "completed" };
+  const handMade = { threadId: "11111111-2222-4333-8444-555555555555", title: `${SETUP_TITLE} · docs`, status: "completed" };
   const threads = JSON.parse(readFileSync(join(state, "threads.json"), "utf8")) as unknown[];
   writeFileSync(join(state, "threads.json"), JSON.stringify([handMade, ...threads]));
 
   stop = await startDispatcher();
   await fake.whenever(() => sentMarkers(pending.id).length === 1);
 
-  expect(fake.annotation(pending.id).thread).toEqual({ id: handMade.threadId, title: SETUP_TITLE });
+  expect(fake.annotation(pending.id).thread).toEqual({ id: handMade.threadId, title: `${SETUP_TITLE} · docs` });
   const send = callsOf("send").at(-1);
   expect(send?.args[2]).toBe(handMade.threadId);
   expect(send?.stdin).toContain("Document the install");

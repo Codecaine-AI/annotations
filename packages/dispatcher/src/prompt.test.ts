@@ -81,7 +81,7 @@ test("a prompt request starts a thread in the prompt-kit project, binds it, and 
 
   const start = t3.callsOf("start")[0];
   expect(start?.args.slice(0, 4)).toEqual(["thread", "start", PROJECT, "-"]);
-  expect(flag(start, "--title")).toBe(TITLE);
+  expect(flag(start, "--title")).toBe(`${TITLE} · prompt`);
   for (const fact of ["Load the prompt-kit skill", id, PROMPT, fake.root, "Make the tone warmer", "prompts_request_reply", "prompts_request_resolve"]) {
     expect(start?.stdin).toContain(fact);
   }
@@ -89,7 +89,7 @@ test("a prompt request starts a thread in the prompt-kit project, binds it, and 
   const annotation = fake.annotation(id);
   const threadId = annotation.thread?.id ?? "";
   expect(threadId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(annotation.thread).toEqual({ id: threadId, title: TITLE });
+  expect(annotation.thread).toEqual({ id: threadId, title: `${TITLE} · prompt` });
   expect(annotation.status).toBe("open");
   expect(sentMarkers(id)[0]?.body).toContain(`t3-thread://v1/${threadId}`);
 });
@@ -120,6 +120,17 @@ test("a human reply on the prompt reaches the thread and an agent reply does not
   expect(sends[1]?.stdin).not.toContain("Removed them.");
 });
 
+test("a request event for a prompt outside the workspace is dropped without a catalog request", async () => {
+  const before = fake.rpcCalls;
+  fake.emitForeign("/repo/other-workspace", PROMPT);
+  // The stream is ordered: once this request is sent, the foreign event before it was handled.
+  const { id } = await fake.file(PROMPT, "Add a summary line");
+  await fake.whenever(() => sentMarkers(id).length === 1);
+
+  expect(fake.rpcCalls).toBe(before);
+  expect(book.lines.some((line) => line.includes("/repo/other-workspace"))).toBe(false);
+});
+
 test("after a service restart with a new token, it dispatches the request filed while it was down", async () => {
   await stop();
   const pending = fake.seed(OTHER, { body: "List breaking changes first" });
@@ -130,7 +141,7 @@ test("after a service restart with a new token, it dispatches the request filed 
   await fake.whenever(() => sentMarkers(pending.id).length === 1);
 
   const start = t3.callsOf("start").at(-1);
-  expect(flag(start, "--title")).toBe(OTHER_TITLE);
+  expect(flag(start, "--title")).toBe(`${OTHER_TITLE} · prompt`);
   expect(start?.stdin).toContain("List breaking changes first");
   expect(fake.annotation(note.id).thread).toBeUndefined();
 });

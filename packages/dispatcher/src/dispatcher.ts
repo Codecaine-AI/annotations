@@ -1,3 +1,4 @@
+import type { Surface } from "./config";
 import { DISPATCHER_ACTOR, type Annotation, type AnnotationReply, type RequestFacts, type Source } from "./source";
 import type { T3 } from "./t3";
 
@@ -59,6 +60,16 @@ function humanReplies(replies: AnnotationReply[], after: number, through: number
 function deliveryText(kind: Delivery["kind"], annotation: Annotation, replies: AnnotationReply[]): string {
   const bodies = replies.map((reply) => reply.body);
   return (kind === "created" ? [annotation.body, ...bodies] : bodies).join("\n\n");
+}
+
+/**
+ * The T3 thread title for a target: its own title, then the surface, such as
+ * "Demo Spec · docs". The surface keeps a page and a board with the same title
+ * in one T3 project on separate threads. Every marker, `t3 thread start`, the
+ * annotation's thread binding and the `t3 thread list` match use this string.
+ */
+export function threadTitle(surface: Surface, title: string): string {
+  return `${title} · ${surface}`;
 }
 
 function describeDelivery(delivered: string): string {
@@ -313,7 +324,7 @@ export class Dispatcher {
       case "pending": {
         const title = await source.title(target);
         const existing = await this.liveThread(source, annotations, title);
-        await source.reply(target, annotationId, sendingMarker(title, existing, state.delivery.delivered));
+        await source.reply(target, annotationId, sendingMarker(threadTitle(source.surface, title), existing, state.delivery.delivered));
         this.attempts.set(keyOf(item), { delivered: state.delivery.delivered, accepted: null });
         return this.deliver({ item, annotation, title, delivery: state.delivery, handoff: { kind: "unsent", threadId: existing } });
       }
@@ -353,6 +364,7 @@ export class Dispatcher {
     const log = (line: string) => this.deps.log(`[${source.surface}] ${line}`);
     const key = keyOf(item);
     const facts: RequestFacts = { kind: delivery.kind, target, title, annotationId, text: delivery.text };
+    const thread = threadTitle(source.surface, title);
     let threadId: string;
     if (handoff.kind !== "unsent") {
       threadId = handoff.threadId;
@@ -361,13 +373,13 @@ export class Dispatcher {
       await t3.send(threadId, source.message(facts));
       log(`sent ${delivery.kind} ${target} ${annotationId} -> thread ${threadId}`);
     } else {
-      threadId = await t3.start(source.t3Project, title, source.message(facts));
-      log(`started thread ${threadId} "${title}" for ${target} ${annotationId}`);
+      threadId = await t3.start(source.t3Project, thread, source.message(facts));
+      log(`started thread ${threadId} "${thread}" for ${target} ${annotationId}`);
     }
     this.attempts.set(key, { delivered: delivery.delivered, accepted: threadId });
-    if (annotation.thread?.id !== threadId) await source.setThread(target, annotationId, { id: threadId, title });
+    if (annotation.thread?.id !== threadId) await source.setThread(target, annotationId, { id: threadId, title: thread });
     const recovered = handoff.kind === "unknown";
-    await source.reply(target, annotationId, sentMarker(title, threadId, delivery.delivered, recovered));
+    await source.reply(target, annotationId, sentMarker(thread, threadId, delivery.delivered, recovered));
     if (recovered) log(`completed ${target} ${annotationId} -> thread ${threadId} after a restart`);
     this.attempts.delete(key);
   }
@@ -375,7 +387,7 @@ export class Dispatcher {
   /**
    * The target's thread id: the newest `thread` field among its annotations
    * when `t3 thread show` confirms it, else a thread in the source's project
-   * titled after the target.
+   * with the target's thread title, surface suffix included.
    */
   private async liveThread(source: Source, annotations: Annotation[], title: string): Promise<string | null> {
     const newest = annotations
@@ -385,7 +397,8 @@ export class Dispatcher {
       if ((await this.deps.t3.show(newest.id)) === "alive") return newest.id;
       this.deps.log(`[${source.surface}] thread ${newest.id} is gone`);
     }
-    const listed = (await this.deps.t3.list(source.t3Project)).find((thread) => thread.title === title);
+    const wanted = threadTitle(source.surface, title);
+    const listed = (await this.deps.t3.list(source.t3Project)).find((thread) => thread.title === wanted);
     return listed?.threadId ?? null;
   }
 }

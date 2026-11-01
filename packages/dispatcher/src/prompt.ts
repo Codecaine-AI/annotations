@@ -5,7 +5,7 @@
  * stream connect. The token goes only into request headers, never into a
  * route, an error or the log.
  */
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 import {
   DISPATCHER_ACTOR,
@@ -120,11 +120,20 @@ export class PromptSource implements Source {
       }
       const event = payload as PromptAnnotationEvent;
       const target = join(event.root, event.path);
-      // The service serves every root. Only prompts in this workspace's catalog belong to this T3 project.
-      if (!this.catalog.has(target)) await this.discover().catch(() => {});
-      if (!this.catalog.has(target)) continue;
+      // The service serves every root. Only prompts in this workspace's catalog belong to this T3 project,
+      // so a path outside the workspace is dropped before any request.
+      if (!this.catalog.has(target)) {
+        if (!this.inWorkspace(target)) continue;
+        await this.discover().catch(() => {});
+        if (!this.catalog.has(target)) continue;
+      }
       yield { kind: "annotation", target, annotationId: event.annotationId, intent: event.intent, change: event.change, actor: event.actor };
     }
+  }
+
+  private inWorkspace(target: string): boolean {
+    const path = relative(this.workspace, target);
+    return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
   }
 
   message(facts: RequestFacts): string {
