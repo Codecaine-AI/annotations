@@ -98,7 +98,7 @@ ORDER BY at, id;
 ## API
 
 ```ts
-import { bindThread, identityFromEnv, newRunId, openActionLog } from "@codecaine-ai/action-log";
+import { identityFromEnv, newRunId, openActionLog } from "@codecaine-ai/action-log";
 
 const runId = newRunId();                     // once per process
 const identity = identityFromEnv();           // { threadId, agent } or nulls
