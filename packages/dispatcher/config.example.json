@@ -1,0 +1,7 @@
+{
+  "docsProject": "knowledge-base-edccd558",
+  "t3Project": "/Users/Ford/workspace/knowledge-base",
+  "t3Provider": "claudeAgent",
+  "t3Model": "claude-opus-5-5",
+  "logPath": "/Users/Ford/.local/state/codecaine-dispatcher/dispatcher.log"
+}

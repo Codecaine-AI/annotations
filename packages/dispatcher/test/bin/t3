@@ -1,0 +1,68 @@
+#!/usr/bin/env bun
+// Fake `t3` CLI for tests. Records every call to $T3_FAKE_STATE/calls.jsonl,
+// keeps started threads in threads.json, and treats ids listed in gone.json
+// the way the real CLI treats a deleted thread.
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const state = process.env.T3_FAKE_STATE;
+if (!state) {
+  console.error("T3_FAKE_STATE is not set");
+  process.exit(2);
+}
+const args = process.argv.slice(2);
+const stdin = args.includes("-") ? await Bun.stdin.text() : "";
+appendFileSync(join(state, "calls.jsonl"), `${JSON.stringify({ args, stdin })}\n`);
+
+const read = (name, fallback) => (existsSync(join(state, name)) ? JSON.parse(readFileSync(join(state, name), "utf8")) : fallback);
+const threads = read("threads.json", []);
+const gone = new Set(read("gone.json", []));
+const json = args.includes("--json");
+const flag = (name) => {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+};
+const unavailable = (id) => {
+  console.error(`Thread ${id} is no longer available.`);
+  process.exit(1);
+};
+
+const [group, sub, arg] = args;
+if (group !== "thread") {
+  console.error(`unknown command: ${args.join(" ")}`);
+  process.exit(2);
+}
+switch (sub) {
+  case "start": {
+    // fail-start makes the next start exit nonzero without a thread, once.
+    if (existsSync(join(state, "fail-start"))) {
+      unlinkSync(join(state, "fail-start"));
+      console.error("T3 server unavailable");
+      process.exit(1);
+    }
+    const threadId = crypto.randomUUID();
+    threads.unshift({ threadId, title: flag("--title") ?? stdin.split("\n")[0], status: "running", projectId: arg });
+    writeFileSync(join(state, "threads.json"), JSON.stringify(threads));
+    console.log(json ? JSON.stringify({ threadId, runId: `run:thread:${threadId}:ordinal:1` }) : threadId);
+    break;
+  }
+  case "send": {
+    if (gone.has(arg) || !threads.some((thread) => thread.threadId === arg)) unavailable(arg);
+    console.log(json ? JSON.stringify({ threadId: arg, queued: true }) : `Queued for ${arg}`);
+    break;
+  }
+  case "show": {
+    const thread = threads.find((item) => item.threadId === arg);
+    if (!thread || gone.has(arg)) unavailable(arg);
+    console.log(json ? JSON.stringify({ thread, messages: [] }) : `${thread.title}\n${thread.threadId}  ${thread.status}`);
+    break;
+  }
+  case "list": {
+    const live = threads.filter((thread) => !gone.has(thread.threadId));
+    console.log(json ? JSON.stringify(live) : live.map((thread) => `${thread.threadId}  ${thread.status}  ${thread.title}`).join("\n"));
+    break;
+  }
+  default:
+    console.error(`unknown subcommand: ${sub}`);
+    process.exit(2);
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@codecaine-ai/dispatcher",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Routes agent-request annotations from docs-server into T3 Code threads.",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "bunx --bun tsc -p tsconfig.json --noEmit"
+  }
+}
