@@ -1,19 +1,15 @@
-import type { Annotation, AnnotationReply, DocsClient } from "./docs";
+import type { Surface } from "./config";
+import { DISPATCHER_ACTOR, type Annotation, type AnnotationReply, type RequestFacts, type Source } from "./source";
 import type { T3 } from "./t3";
 
-/** `session_id` on every write, so the dispatcher's own change events carry this actor and are skipped. */
-export const DISPATCHER_ACTOR = "dispatcher";
-/** Author of the dispatcher's replies. The Lab renders "system" and "agent" as non-human. */
-export const SYSTEM_AUTHOR = "system";
 /** Completion marker: the turn is in the thread and the annotation records which replies it carried. */
 export const MARKER = "Sent to T3 thread";
 /** In-flight marker, written before the T3 call, so a crash between the two leaves a record with the delivery's identity. */
 export const SENDING_MARKER = "Sending to T3";
-export const SKILL = "docs-system";
 
 export type Role = "human" | "agent" | "system";
 
-/** The docs-kernel convention: `agent` and `system` are machine authors, everything else is a person. */
+/** The annotation convention on every surface: `agent` and `system` are machine authors, everything else is a person. */
 export function roleOf(author: string): Role {
   return author === "agent" || author === "system" ? author : "human";
 }
@@ -66,6 +62,16 @@ function deliveryText(kind: Delivery["kind"], annotation: Annotation, replies: A
   return (kind === "created" ? [annotation.body, ...bodies] : bodies).join("\n\n");
 }
 
+/**
+ * The T3 thread title for a target: its own title, then the surface, such as
+ * "Demo Spec · docs". The surface keeps a page and a board with the same title
+ * in one T3 project on separate threads. Every marker, `t3 thread start`, the
+ * annotation's thread binding and the `t3 thread list` match use this string.
+ */
+export function threadTitle(surface: Surface, title: string): string {
+  return `${title} · ${surface}`;
+}
+
 function describeDelivery(delivered: string): string {
   return delivered === "request" ? "Delivery: request." : `Delivery: reply ${delivered}.`;
 }
@@ -92,7 +98,7 @@ export function sentMarker(title: string, threadId: string, delivered: string, r
  *
  * With no marker at all, an open request is new and its text is the body plus
  * any human replies so far. A resolved one without a marker was handled some
- * other way and is left alone.
+ * other way and is left alone. Canvas `applied` counts as handled too.
  */
 export function deliveryState(annotation: Annotation): DeliveryState {
   const idle: DeliveryState = { kind: "idle" };
@@ -119,41 +125,18 @@ export function pendingRequest(annotation: Annotation): Delivery | null {
   return state.kind === "pending" ? state.delivery : null;
 }
 
-export type RequestFacts = { kind: Delivery["kind"]; path: string; title: string; annotationId: string; text: string };
-
-/** The message a thread gets: the skill to load, the annotation id, the page path, the request, and how to answer. */
-export function threadMessage(facts: RequestFacts): string {
-  const lead =
-    facts.kind === "created"
-      ? `A human filed a request on the docs page "${facts.title}" (${facts.path}).`
-      : `A human replied on the docs page "${facts.title}" (${facts.path}).`;
-  return [
-    `Load the ${SKILL} skill before you start.`,
-    "",
-    lead,
-    `Read the page with the docs MCP tools, do the work, then answer through the docs MCP annotation tools: reply with docs_annotation_reply using author "agent" and annotation_id "${facts.annotationId}", and resolve the annotation with docs_annotation_resolve when the request is done.`,
-    `Replies with author "agent" stay in the Lab and are not sent back to this thread. A human reply on the annotation reaches this thread as a new message.`,
-    "",
-    `Annotation: ${facts.annotationId}`,
-    `Page: ${facts.path}`,
-    "Request:",
-    facts.text,
-  ].join("\n");
-}
-
 export type DispatcherDeps = {
-  docs: DocsClient;
+  sources: Source[];
   t3: T3;
-  t3Project: string;
   log: (line: string) => void;
   /** Delay before a failed request is tried again. */
   retryMs?: number;
-  /** Delay between reconnect attempts when the stream drops. */
+  /** Delay before the first reconnect when a stream drops. Doubles while the source stays down. */
   reconnectMs?: number;
 };
 
 type Key = string;
-type Target = { path: string; annotationId: string };
+type Target = { source: Source; target: string; annotationId: string };
 /** What this process knows about a delivery it wrote a `Sending` marker for. `accepted` holds the thread id once T3 took the turn. */
 type Attempt = { delivered: string; accepted: string | null };
 /**
@@ -164,13 +147,15 @@ type Attempt = { delivered: string; accepted: string | null };
 type Handoff = { kind: "unsent"; threadId: string | null } | { kind: "accepted" | "unknown"; threadId: string };
 
 const MAX_RETRY_MS = 5 * 60_000;
+const MAX_RECONNECT_MS = 60_000;
 
-const keyOf = (target: Target): Key => `${target.path}\u0000${target.annotationId}`;
+const keyOf = (item: Target): Key => `${item.source.surface}\u0000${item.target}\u0000${item.annotationId}`;
 
 /**
- * One loop: subscribe to the docs change stream, scan the corpus on every
- * (re)connect because the stream has no replay, and hand each pending request
- * to its page's T3 thread. All durable state lives in the annotation store.
+ * One loop: subscribe to every source's change stream, scan a source on every
+ * (re)connect because no stream replays, and hand each pending request to its
+ * target's T3 thread through one queue. All durable state lives in the
+ * annotation stores.
  */
 export class Dispatcher {
   private readonly queue = new Map<Key, Target>();
@@ -194,35 +179,7 @@ export class Dispatcher {
   async run(signal: AbortSignal): Promise<void> {
     this.signal = signal;
     try {
-      while (!signal.aborted) {
-        try {
-          await this.deps.docs.refresh();
-          for await (const item of this.deps.docs.events(signal)) {
-            if (item.kind === "open") {
-              this.deps.log("stream open");
-              void this.scan().catch((error) => this.deps.log(`scan failed: ${message(error)}`));
-              continue;
-            }
-            const { annotation, actor, path } = item.event;
-            if (actor === DISPATCHER_ACTOR) continue;
-            if (!annotation) {
-              // A plain change event, such as the file watcher's, says only which
-              // page changed. Re-reading its annotations covers requests written
-              // outside the API, for instance through the docs MCP in another process.
-              if (path) void this.checkPage(path).catch((error) => this.deps.log(`check ${path} failed: ${message(error)}`));
-              continue;
-            }
-            if (annotation.intent !== "agent-request") continue;
-            if (annotation.change !== "created" && annotation.change !== "replied") continue;
-            this.deps.log(`event ${annotation.change} ${path} ${annotation.id} by ${actor}`);
-            this.enqueue({ path, annotationId: annotation.id });
-          }
-          if (!signal.aborted) this.deps.log("stream closed");
-        } catch (error) {
-          if (!signal.aborted) this.deps.log(`stream error: ${message(error)}`);
-        }
-        if (!signal.aborted) await sleep(this.reconnectMs, signal);
-      }
+      await Promise.all(this.deps.sources.map((source) => this.follow(source, signal)));
     } finally {
       for (const timer of this.retries.values()) clearTimeout(timer);
       this.retries.clear();
@@ -230,47 +187,79 @@ export class Dispatcher {
     }
   }
 
-  /** Enqueues every annotation with work, across the whole project. */
-  async scan(): Promise<void> {
-    const paths = await this.deps.docs.bundlePaths();
+  /** Keeps one source's stream open, reconnecting with backoff while it is down. */
+  private async follow(source: Source, signal: AbortSignal): Promise<void> {
+    const log = (line: string) => this.deps.log(`[${source.surface}] ${line}`);
+    let downs = 0;
+    while (!signal.aborted) {
+      try {
+        for await (const event of source.events(signal)) {
+          if (event.kind === "open") {
+            downs = 0;
+            log("stream open");
+            void this.scan(source).catch((error) => log(`scan failed: ${message(error)}`));
+            continue;
+          }
+          if (event.kind === "touched") {
+            void this.checkTarget(source, event.target).catch((error) => log(`check ${event.target} failed: ${message(error)}`));
+            continue;
+          }
+          if (event.actor === DISPATCHER_ACTOR) continue;
+          if (event.intent !== "agent-request") continue;
+          if (event.change !== "created" && event.change !== "replied") continue;
+          log(`event ${event.change} ${event.target} ${event.annotationId}${event.actor ? ` by ${event.actor}` : ""}`);
+          this.enqueue({ source, target: event.target, annotationId: event.annotationId });
+        }
+        if (!signal.aborted) log("stream closed");
+      } catch (error) {
+        if (!signal.aborted) log(`stream error: ${message(error)}`);
+      }
+      downs += 1;
+      if (!signal.aborted) await sleep(Math.min(this.reconnectMs * 2 ** (downs - 1), MAX_RECONNECT_MS), signal);
+    }
+  }
+
+  /** Enqueues every annotation with work, across the source's targets. */
+  async scan(source: Source): Promise<void> {
+    const targets = await source.targets();
     let found = 0;
     const pool = 8;
-    for (let index = 0; index < paths.length; index += pool) {
-      // One unreadable page must not hide the pages after it.
+    for (let index = 0; index < targets.length; index += pool) {
+      // One unreadable target must not hide the targets after it.
       const counts = await Promise.all(
-        paths.slice(index, index + pool).map((path) =>
-          this.checkPage(path).catch((error) => {
-            this.deps.log(`scan ${path} failed: ${message(error)}`);
+        targets.slice(index, index + pool).map((target) =>
+          this.checkTarget(source, target).catch((error) => {
+            this.deps.log(`[${source.surface}] scan ${target} failed: ${message(error)}`);
             return 0;
           }),
         ),
       );
       found += counts.reduce((sum, count) => sum + count, 0);
     }
-    this.deps.log(`scan done: ${paths.length} pages, ${found} pending`);
+    this.deps.log(`[${source.surface}] scan done: ${targets.length} targets, ${found} pending`);
   }
 
-  /** Enqueues the page's annotations with a pending or in-flight delivery and returns how many there were. */
-  private async checkPage(path: string): Promise<number> {
-    const annotations = await this.deps.docs.annotations(path);
+  /** Enqueues the target's annotations with a pending or in-flight delivery and returns how many there were. */
+  private async checkTarget(source: Source, target: string): Promise<number> {
+    const annotations = await source.annotations(target);
     let found = 0;
     for (const annotation of annotations) {
       if (deliveryState(annotation).kind === "idle") continue;
       found += 1;
-      this.enqueue({ path, annotationId: annotation.id });
+      this.enqueue({ source, target, annotationId: annotation.id });
     }
     return found;
   }
 
   /** Queues an attempt, unless the annotation is in backoff: then its scheduled attempt reads the new state. */
-  private enqueue(target: Target): void {
+  private enqueue(item: Target): void {
     if (this.signal.aborted) return;
-    const key = keyOf(target);
+    const key = keyOf(item);
     if (this.retries.has(key)) {
-      this.deps.log(`${target.path} ${target.annotationId} changed, waiting for its retry`);
+      this.deps.log(`[${item.source.surface}] ${item.target} ${item.annotationId} changed, waiting for its retry`);
       return;
     }
-    this.queue.set(key, target);
+    this.queue.set(key, item);
     if (!this.draining) void this.drain();
   }
 
@@ -280,10 +269,10 @@ export class Dispatcher {
       while (this.queue.size > 0 && !this.signal.aborted) {
         const first = this.queue.entries().next();
         if (first.done) break;
-        const [key, target] = first.value;
+        const [key, item] = first.value;
         this.queue.delete(key);
         try {
-          await this.dispatch(target);
+          await this.dispatch(item);
           this.failures.delete(key);
         } catch (error) {
           if (this.signal.aborted) return;
@@ -292,12 +281,12 @@ export class Dispatcher {
           const failures = (this.failures.get(key) ?? 0) + 1;
           this.failures.set(key, failures);
           const delay = Math.min(this.retryMs * 2 ** (failures - 1), MAX_RETRY_MS);
-          this.deps.log(`dispatch ${target.path} ${target.annotationId} failed (${failures}x), retry in ${delay}ms: ${message(error)}`);
+          this.deps.log(`[${item.source.surface}] dispatch ${item.target} ${item.annotationId} failed (${failures}x), retry in ${delay}ms: ${message(error)}`);
           this.retries.set(
             key,
             setTimeout(() => {
               this.retries.delete(key);
-              this.enqueue(target);
+              this.enqueue(item);
             }, delay),
           );
         }
@@ -316,28 +305,28 @@ export class Dispatcher {
    * exists before the send is what lets a restart decide "already handed to
    * T3" without a second turn. The cost is the reverse window: a crash after
    * the marker and before T3 answers completes on restart as handed off, with
-   * a note on the `Sent` marker, so the Lab shows which turn to check.
+   * a note on the `Sent` marker, so the studio shows which turn to check.
    */
-  private async dispatch(target: Target): Promise<void> {
-    const { docs } = this.deps;
-    const annotations = await docs.annotations(target.path);
-    const annotation = annotations.find((item) => item.id === target.annotationId);
+  private async dispatch(item: Target): Promise<void> {
+    const { source, target, annotationId } = item;
+    const annotations = await source.annotations(target);
+    const annotation = annotations.find((entry) => entry.id === annotationId);
     if (!annotation) return;
     const state = deliveryState(annotation);
     switch (state.kind) {
       case "idle":
         return;
       case "in-flight":
-        await this.complete({ target, annotations, annotation, delivery: state.delivery, threadId: state.threadId });
+        await this.complete({ item, annotations, annotation, delivery: state.delivery, threadId: state.threadId });
         // A reply that landed while the delivery was in flight is pending now, so look again.
-        this.enqueue(target);
+        this.enqueue(item);
         return;
       case "pending": {
-        const title = await docs.pageTitle(target.path);
-        const existing = await this.liveThread(annotations, title);
-        await docs.reply(target.path, target.annotationId, sendingMarker(title, existing, state.delivery.delivered), SYSTEM_AUTHOR, DISPATCHER_ACTOR);
-        this.attempts.set(keyOf(target), { delivered: state.delivery.delivered, accepted: null });
-        return this.deliver({ target, annotation, title, delivery: state.delivery, handoff: { kind: "unsent", threadId: existing } });
+        const title = await source.title(target);
+        const existing = await this.liveThread(source, annotations, title);
+        await source.reply(target, annotationId, sendingMarker(threadTitle(source.surface, title), existing, state.delivery.delivered));
+        this.attempts.set(keyOf(item), { delivered: state.delivery.delivered, accepted: null });
+        return this.deliver({ item, annotation, title, delivery: state.delivery, handoff: { kind: "unsent", threadId: existing } });
       }
       default: {
         const _exhaustive: never = state;
@@ -346,19 +335,19 @@ export class Dispatcher {
     }
   }
 
-  /** Finishes a delivery whose `Sending` marker is on the annotation: the T3 call only when this process knows it never landed, then the Docs writes. */
-  private async complete(step: { target: Target; annotations: Annotation[]; annotation: Annotation; delivery: Delivery; threadId: string | null }): Promise<void> {
-    const { target, annotations, annotation, delivery, threadId } = step;
-    const attempt = this.attempts.get(keyOf(target));
+  /** Finishes a delivery whose `Sending` marker is on the annotation: the T3 call only when this process knows it never landed, then the studio writes. */
+  private async complete(step: { item: Target; annotations: Annotation[]; annotation: Annotation; delivery: Delivery; threadId: string | null }): Promise<void> {
+    const { item, annotations, annotation, delivery, threadId } = step;
+    const attempt = this.attempts.get(keyOf(item));
     const own = attempt?.delivered === delivery.delivered ? attempt : null;
-    const title = await this.deps.docs.pageTitle(target.path);
-    const finish = (handoff: Handoff) => this.deliver({ target, annotation, title, delivery, handoff });
+    const title = await item.source.title(item.target);
+    const finish = (handoff: Handoff) => this.deliver({ item, annotation, title, delivery, handoff });
     if (own?.accepted) return finish({ kind: "accepted", threadId: own.accepted });
     if (threadId && !own) {
       // An earlier process wrote the marker and may have sent the turn. The record stands.
       return finish({ kind: "unknown", threadId });
     }
-    const live = await this.liveThread(annotations, title);
+    const live = await this.liveThread(item.source, annotations, title);
     if (!threadId && live && !own) {
       // The marker promised a new thread and one exists now: the start landed before the interruption.
       // With `own`, this process saw its start fail, so a live thread is another request's and gets the turn.
@@ -368,43 +357,48 @@ export class Dispatcher {
   }
 
   /** The T3 call when the turn is not there yet, then the thread bind and the `Sent` marker. */
-  private async deliver(step: { target: Target; annotation: Annotation; title: string; delivery: Delivery; handoff: Handoff }): Promise<void> {
-    const { target, annotation, title, delivery, handoff } = step;
-    const { docs, t3, t3Project, log } = this.deps;
-    const key = keyOf(target);
-    const facts: RequestFacts = { kind: delivery.kind, path: target.path, title, annotationId: target.annotationId, text: delivery.text };
+  private async deliver(step: { item: Target; annotation: Annotation; title: string; delivery: Delivery; handoff: Handoff }): Promise<void> {
+    const { item, annotation, title, delivery, handoff } = step;
+    const { source, target, annotationId } = item;
+    const { t3 } = this.deps;
+    const log = (line: string) => this.deps.log(`[${source.surface}] ${line}`);
+    const key = keyOf(item);
+    const facts: RequestFacts = { kind: delivery.kind, target, title, annotationId, text: delivery.text };
+    const thread = threadTitle(source.surface, title);
     let threadId: string;
     if (handoff.kind !== "unsent") {
       threadId = handoff.threadId;
     } else if (handoff.threadId) {
       threadId = handoff.threadId;
-      await t3.send(threadId, threadMessage(facts));
-      log(`sent ${delivery.kind} ${target.path} ${target.annotationId} -> thread ${threadId}`);
+      await t3.send(threadId, source.message(facts));
+      log(`sent ${delivery.kind} ${target} ${annotationId} -> thread ${threadId}`);
     } else {
-      threadId = await t3.start(t3Project, title, threadMessage(facts));
-      log(`started thread ${threadId} "${title}" for ${target.path} ${target.annotationId}`);
+      threadId = await t3.start(source.t3Project, thread, source.message(facts));
+      log(`started thread ${threadId} "${thread}" for ${target} ${annotationId}`);
     }
     this.attempts.set(key, { delivered: delivery.delivered, accepted: threadId });
-    if (annotation.thread?.id !== threadId) await docs.setThread(target.path, target.annotationId, { id: threadId, title }, DISPATCHER_ACTOR);
+    if (annotation.thread?.id !== threadId) await source.setThread(target, annotationId, { id: threadId, title: thread });
     const recovered = handoff.kind === "unknown";
-    await docs.reply(target.path, target.annotationId, sentMarker(title, threadId, delivery.delivered, recovered), SYSTEM_AUTHOR, DISPATCHER_ACTOR);
-    if (recovered) log(`completed ${target.path} ${target.annotationId} -> thread ${threadId} after a restart`);
+    await source.reply(target, annotationId, sentMarker(thread, threadId, delivery.delivered, recovered));
+    if (recovered) log(`completed ${target} ${annotationId} -> thread ${threadId} after a restart`);
     this.attempts.delete(key);
   }
 
   /**
-   * The page's thread id: the newest `thread` field among its annotations when
-   * `t3 thread show` confirms it, else a project thread titled after the page.
+   * The target's thread id: the newest `thread` field among its annotations
+   * when `t3 thread show` confirms it, else a thread in the source's project
+   * with the target's thread title, surface suffix included.
    */
-  private async liveThread(annotations: Annotation[], title: string): Promise<string | null> {
+  private async liveThread(source: Source, annotations: Annotation[], title: string): Promise<string | null> {
     const newest = annotations
       .filter((item) => item.thread)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.thread;
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0]?.thread;
     if (newest) {
       if ((await this.deps.t3.show(newest.id)) === "alive") return newest.id;
-      this.deps.log(`thread ${newest.id} is gone`);
+      this.deps.log(`[${source.surface}] thread ${newest.id} is gone`);
     }
-    const listed = (await this.deps.t3.list(this.deps.t3Project)).find((thread) => thread.title === title);
+    const wanted = threadTitle(source.surface, title);
+    const listed = (await this.deps.t3.list(source.t3Project)).find((thread) => thread.title === wanted);
     return listed?.threadId ?? null;
   }
 }
