@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Fake `t3` CLI for tests. Records every call to $T3_FAKE_STATE/calls.jsonl,
-// keeps started threads in threads.json, and treats ids listed in gone.json
+// keeps started threads and their user turns in threads.json, and treats ids listed in gone.json
 // the way the real CLI treats a deleted thread.
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -41,24 +41,29 @@ switch (sub) {
       process.exit(1);
     }
     const threadId = crypto.randomUUID();
-    threads.unshift({ threadId, title: flag("--title") ?? stdin.split("\n")[0], status: "running", projectId: arg });
+    threads.unshift({ threadId, title: flag("--title") ?? stdin.split("\n")[0], status: "running", projectId: arg, messages: [{ role: "user", text: stdin }] });
     writeFileSync(join(state, "threads.json"), JSON.stringify(threads));
     console.log(json ? JSON.stringify({ threadId, runId: `run:thread:${threadId}:ordinal:1` }) : threadId);
     break;
   }
   case "send": {
-    if (gone.has(arg) || !threads.some((thread) => thread.threadId === arg)) unavailable(arg);
+    const thread = threads.find((item) => item.threadId === arg);
+    if (gone.has(arg) || !thread) unavailable(arg);
+    thread.messages = [...(thread.messages ?? []), { role: "user", text: stdin }];
+    writeFileSync(join(state, "threads.json"), JSON.stringify(threads));
     console.log(json ? JSON.stringify({ threadId: arg, queued: true }) : `Queued for ${arg}`);
     break;
   }
   case "show": {
     const thread = threads.find((item) => item.threadId === arg);
     if (!thread || gone.has(arg)) unavailable(arg);
-    console.log(json ? JSON.stringify({ thread, messages: [] }) : `${thread.title}\n${thread.threadId}  ${thread.status}`);
+    const { messages = [], ...summary } = thread;
+    const count = Number(flag("--messages") ?? 10);
+    console.log(json ? JSON.stringify({ thread: summary, messages: count > 0 ? messages.slice(-count) : [] }) : `${thread.title}\n${thread.threadId}  ${thread.status}`);
     break;
   }
   case "list": {
-    const live = threads.filter((thread) => !gone.has(thread.threadId));
+    const live = threads.filter((thread) => !gone.has(thread.threadId)).map(({ messages, ...summary }) => summary);
     console.log(json ? JSON.stringify(live) : live.map((thread) => `${thread.threadId}  ${thread.status}  ${thread.title}`).join("\n"));
     break;
   }

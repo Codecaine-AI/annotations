@@ -37,6 +37,8 @@ export type RequestFacts = {
   target: string;
   title: string;
   annotationId: string;
+  /** The delivery's identity on the annotation: `request`, or the id of the newest human reply it carries. */
+  delivered: string;
   text: string;
 };
 
@@ -65,13 +67,23 @@ export const DISPATCHER_ACTOR = "dispatcher";
 /** Author of the dispatcher's replies. Every studio renders "system" and "agent" as non-human. */
 export const SYSTEM_AUTHOR = "system";
 
+/** The message line that names the target. With the thread title's surface suffix, it is how the dispatcher finds a target's thread in T3. */
+export function targetLine(target: string): string {
+  return `Target: ${target}`;
+}
+
+/** The message lines that identify one delivery. After a restart the dispatcher looks for them in the thread to tell whether the turn landed. */
+export function turnHeader(facts: Pick<RequestFacts, "annotationId" | "target" | "delivered">): string[] {
+  return [`Annotation: ${facts.annotationId}`, targetLine(facts.target), `Delivery: ${facts.delivered}`];
+}
+
 /** The lines every thread message ends with. */
 export function messageTail(facts: RequestFacts, where: string[]): string[] {
   return [
     "Replies with author \"agent\" stay in the studio and are not sent back to this thread. A human reply on the annotation reaches this thread as a new message.",
     "If your harness does not set T3CODE_THREAD_ID (Codex does not), pass this thread's id as thread_id to canvas_open, docs_begin or prompts_begin, so the action log joins your edits to this thread.",
     "",
-    `Annotation: ${facts.annotationId}`,
+    ...turnHeader(facts),
     ...where,
     "Request:",
     facts.text,
