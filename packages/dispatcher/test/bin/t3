@@ -2,7 +2,7 @@
 // Fake `t3` CLI for tests. Records every call to $T3_FAKE_STATE/calls.jsonl,
 // keeps started threads in threads.json, and treats ids listed in gone.json
 // the way the real CLI treats a deleted thread.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const state = process.env.T3_FAKE_STATE;
@@ -34,6 +34,12 @@ if (group !== "thread") {
 }
 switch (sub) {
   case "start": {
+    // fail-start makes the next start exit nonzero without a thread, once.
+    if (existsSync(join(state, "fail-start"))) {
+      unlinkSync(join(state, "fail-start"));
+      console.error("T3 server unavailable");
+      process.exit(1);
+    }
     const threadId = crypto.randomUUID();
     threads.unshift({ threadId, title: flag("--title") ?? stdin.split("\n")[0], status: "running", projectId: arg });
     writeFileSync(join(state, "threads.json"), JSON.stringify(threads));

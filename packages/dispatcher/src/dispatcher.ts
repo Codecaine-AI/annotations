@@ -236,7 +236,15 @@ export class Dispatcher {
     let found = 0;
     const pool = 8;
     for (let index = 0; index < paths.length; index += pool) {
-      const counts = await Promise.all(paths.slice(index, index + pool).map((path) => this.checkPage(path)));
+      // One unreadable page must not hide the pages after it.
+      const counts = await Promise.all(
+        paths.slice(index, index + pool).map((path) =>
+          this.checkPage(path).catch((error) => {
+            this.deps.log(`scan ${path} failed: ${message(error)}`);
+            return 0;
+          }),
+        ),
+      );
       found += counts.reduce((sum, count) => sum + count, 0);
     }
     this.deps.log(`scan done: ${paths.length} pages, ${found} pending`);
@@ -351,8 +359,9 @@ export class Dispatcher {
       return finish({ kind: "unknown", threadId });
     }
     const live = await this.liveThread(annotations, title);
-    if (!threadId && live) {
+    if (!threadId && live && !own) {
       // The marker promised a new thread and one exists now: the start landed before the interruption.
+      // With `own`, this process saw its start fail, so a live thread is another request's and gets the turn.
       return finish({ kind: "unknown", threadId: live });
     }
     return finish({ kind: "unsent", threadId: live });

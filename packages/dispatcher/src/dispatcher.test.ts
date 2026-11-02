@@ -22,6 +22,8 @@ const SETUP_PAGE = "guides/setup";
 const SETUP_TITLE = "Setup Guide";
 const BROKEN_PAGE = "guides/retries";
 const BROKEN_TITLE = "Retries Guide";
+const RACE_PAGE = "guides/race";
+const RACE_TITLE = "Race Guide";
 
 type Call = { args: string[]; stdin: string };
 
@@ -64,7 +66,7 @@ beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "dispatcher-test-"));
   process.env.T3_FAKE_STATE = state;
   process.env.PATH = `${join(import.meta.dir, "..", "test", "bin")}:${process.env.PATH}`;
-  fake = new FakeDocs({ [PAGE]: TITLE, [SETUP_PAGE]: SETUP_TITLE, [BROKEN_PAGE]: BROKEN_TITLE });
+  fake = new FakeDocs({ [PAGE]: TITLE, [SETUP_PAGE]: SETUP_TITLE, [BROKEN_PAGE]: BROKEN_TITLE, [RACE_PAGE]: RACE_TITLE });
   stop = await startDispatcher();
 });
 
@@ -247,4 +249,23 @@ test("a failing annotation backs off on one timer, and new events for it wait fo
   expect(second - first).toBeGreaterThanOrEqual(180);
   expect(third - second).toBeGreaterThanOrEqual(360);
   expect(turnsFor(id)).toHaveLength(0);
+});
+
+test("a request whose thread start failed is sent to the thread another request started meanwhile", async () => {
+  await stop();
+  stop = await startDispatcher({ retryMs: 1_000 });
+  writeFileSync(join(state, "fail-start"), "");
+
+  const failed = await fake.file(RACE_PAGE, "Explain the race", "ford");
+  await fake.whenever(() => !existsSync(join(state, "fail-start")));
+  const other = await fake.file(RACE_PAGE, "Add an example", "ford");
+  await fake.whenever(() => sentMarkers(other.id).length === 1);
+  const threadId = fake.annotation(other.id).thread?.id ?? "";
+
+  await fake.whenever(() => sentMarkers(failed.id).length === 1);
+  const turns = turnsFor(failed.id);
+  expect(turns.map((call) => call.args[1])).toEqual(["start", "send"]);
+  expect(turns[1]?.args[2]).toBe(threadId);
+  expect(fake.annotation(failed.id).thread?.id).toBe(threadId);
+  expect(sentMarkers(failed.id)[0]?.body).not.toContain("restart");
 });
