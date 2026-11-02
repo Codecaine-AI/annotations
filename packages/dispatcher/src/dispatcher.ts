@@ -1,5 +1,5 @@
 import type { Surface } from "./config";
-import { DISPATCHER_ACTOR, type Annotation, type AnnotationReply, type RequestFacts, type Source } from "./source";
+import { DISPATCHER_ACTOR, targetLine, turnHeader, type Annotation, type AnnotationReply, type RequestFacts, type Source } from "./source";
 import type { T3 } from "./t3";
 
 /** Completion marker: the turn is in the thread and the annotation records which replies it carried. */
@@ -67,6 +67,8 @@ function deliveryText(kind: Delivery["kind"], annotation: Annotation, replies: A
  * "Demo Spec · docs". The surface keeps a page and a board with the same title
  * in one T3 project on separate threads. Every marker, `t3 thread start`, the
  * annotation's thread binding and the `t3 thread list` match use this string.
+ * Two pages can share a title, so the list match also needs a turn in the
+ * thread that names the target.
  */
 export function threadTitle(surface: Surface, title: string): string {
   return `${title} · ${surface}`;
@@ -83,7 +85,7 @@ export function sendingMarker(title: string, threadId: string | null, delivered:
 }
 
 export function sentMarker(title: string, threadId: string, delivered: string, recovered: boolean): string {
-  const note = recovered ? " Completed after a dispatcher restart: check that the thread received it." : "";
+  const note = recovered ? " Completed after a dispatcher restart: the thread already had this turn." : "";
   return `${MARKER} "${title}" (t3-thread://v1/${threadId}). ${describeDelivery(delivered)}${note}`;
 }
 
@@ -140,11 +142,11 @@ type Target = { source: Source; target: string; annotationId: string };
 /** What this process knows about a delivery it wrote a `Sending` marker for. `accepted` holds the thread id once T3 took the turn. */
 type Attempt = { delivered: string; accepted: string | null };
 /**
- * Whether T3 has the turn: `unsent` means this process knows it does not,
- * `accepted` that it does, and `unknown` that a `Sending` marker from an
- * earlier process stands for it, so T3 is not asked twice.
+ * Whether T3 has the turn: `unsent` means it does not, `accepted` that T3
+ * took it from this process, and `recovered` that the thread already holds
+ * the turn an earlier process sent before it stopped.
  */
-type Handoff = { kind: "unsent"; threadId: string | null } | { kind: "accepted" | "unknown"; threadId: string };
+type Handoff = { kind: "unsent"; threadId: string | null } | { kind: "accepted" | "recovered"; threadId: string };
 
 const MAX_RETRY_MS = 5 * 60_000;
 const MAX_RECONNECT_MS = 60_000;
@@ -303,9 +305,9 @@ export class Dispatcher {
    * Write order: the `Sending` marker goes down before the T3 call. The marker
    * is the only durable place for the delivery's identity, and a record that
    * exists before the send is what lets a restart decide "already handed to
-   * T3" without a second turn. The cost is the reverse window: a crash after
-   * the marker and before T3 answers completes on restart as handed off, with
-   * a note on the `Sent` marker, so the studio shows which turn to check.
+   * T3" without a second turn. On restart, the thread's own user turns say
+   * whether the send landed: the turn goes out only when the thread does not
+   * hold it. A turn T3 queued but does not show yet can then arrive twice.
    */
   private async dispatch(item: Target): Promise<void> {
     const { source, target, annotationId } = item;
@@ -323,7 +325,7 @@ export class Dispatcher {
         return;
       case "pending": {
         const title = await source.title(target);
-        const existing = await this.liveThread(source, annotations, title);
+        const existing = await this.liveThread(source, target, annotations, title);
         await source.reply(target, annotationId, sendingMarker(threadTitle(source.surface, title), existing, state.delivery.delivered));
         this.attempts.set(keyOf(item), { delivered: state.delivery.delivered, accepted: null });
         return this.deliver({ item, annotation, title, delivery: state.delivery, handoff: { kind: "unsent", threadId: existing } });
@@ -335,7 +337,7 @@ export class Dispatcher {
     }
   }
 
-  /** Finishes a delivery whose `Sending` marker is on the annotation: the T3 call only when this process knows it never landed, then the studio writes. */
+  /** Finishes a delivery whose `Sending` marker is on the annotation: the T3 call unless the thread already has the turn, then the studio writes. */
   private async complete(step: { item: Target; annotations: Annotation[]; annotation: Annotation; delivery: Delivery; threadId: string | null }): Promise<void> {
     const { item, annotations, annotation, delivery, threadId } = step;
     const attempt = this.attempts.get(keyOf(item));
@@ -343,17 +345,24 @@ export class Dispatcher {
     const title = await item.source.title(item.target);
     const finish = (handoff: Handoff) => this.deliver({ item, annotation, title, delivery, handoff });
     if (own?.accepted) return finish({ kind: "accepted", threadId: own.accepted });
-    if (threadId && !own) {
-      // An earlier process wrote the marker and may have sent the turn. The record stands.
-      return finish({ kind: "unknown", threadId });
-    }
-    const live = await this.liveThread(item.source, annotations, title);
-    if (!threadId && live && !own) {
-      // The marker promised a new thread and one exists now: the start landed before the interruption.
-      // With `own`, this process saw its start fail, so a live thread is another request's and gets the turn.
-      return finish({ kind: "unknown", threadId: live });
+    const live = await this.liveThread(item.source, item.target, annotations, title);
+    if (!own) {
+      // An earlier process wrote the marker and stopped before or after the T3 call. The thread named
+      // on the marker, or the one a new-thread start made, holds the turn only if the call landed.
+      // With `own`, this process saw its call fail, so the turn goes out now.
+      const wanted = turnHeader(this.facts(item, title, delivery));
+      for (const candidate of new Set([threadId, live])) {
+        if (!candidate) continue;
+        const turns = await this.deps.t3.userTurns(candidate);
+        const landed = turns !== "gone" && turns.some((turn) => wanted.every((line) => headerOf(turn).includes(line)));
+        if (landed) return finish({ kind: "recovered", threadId: candidate });
+      }
     }
     return finish({ kind: "unsent", threadId: live });
+  }
+
+  private facts(item: Target, title: string, delivery: Delivery): RequestFacts {
+    return { kind: delivery.kind, target: item.target, title, annotationId: item.annotationId, delivered: delivery.delivered, text: delivery.text };
   }
 
   /** The T3 call when the turn is not there yet, then the thread bind and the `Sent` marker. */
@@ -363,7 +372,7 @@ export class Dispatcher {
     const { t3 } = this.deps;
     const log = (line: string) => this.deps.log(`[${source.surface}] ${line}`);
     const key = keyOf(item);
-    const facts: RequestFacts = { kind: delivery.kind, target, title, annotationId, text: delivery.text };
+    const facts = this.facts(item, title, delivery);
     const thread = threadTitle(source.surface, title);
     let threadId: string;
     if (handoff.kind !== "unsent") {
@@ -378,7 +387,7 @@ export class Dispatcher {
     }
     this.attempts.set(key, { delivered: delivery.delivered, accepted: threadId });
     if (annotation.thread?.id !== threadId) await source.setThread(target, annotationId, { id: threadId, title: thread });
-    const recovered = handoff.kind === "unknown";
+    const recovered = handoff.kind === "recovered";
     await source.reply(target, annotationId, sentMarker(thread, threadId, delivery.delivered, recovered));
     if (recovered) log(`completed ${target} ${annotationId} -> thread ${threadId} after a restart`);
     this.attempts.delete(key);
@@ -387,9 +396,10 @@ export class Dispatcher {
   /**
    * The target's thread id: the newest `thread` field among its annotations
    * when `t3 thread show` confirms it, else a thread in the source's project
-   * with the target's thread title, surface suffix included.
+   * with the target's thread title, surface suffix included, that holds a
+   * turn naming the target.
    */
-  private async liveThread(source: Source, annotations: Annotation[], title: string): Promise<string | null> {
+  private async liveThread(source: Source, target: string, annotations: Annotation[], title: string): Promise<string | null> {
     const newest = annotations
       .filter((item) => item.thread)
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0]?.thread;
@@ -398,9 +408,18 @@ export class Dispatcher {
       this.deps.log(`[${source.surface}] thread ${newest.id} is gone`);
     }
     const wanted = threadTitle(source.surface, title);
-    const listed = (await this.deps.t3.list(source.t3Project)).find((thread) => thread.title === wanted);
-    return listed?.threadId ?? null;
+    for (const thread of await this.deps.t3.list(source.t3Project)) {
+      if (thread.title !== wanted) continue;
+      const turns = await this.deps.t3.userTurns(thread.threadId);
+      if (turns !== "gone" && turns.some((turn) => headerOf(turn).includes(targetLine(target)))) return thread.threadId;
+    }
+    return null;
   }
+}
+
+/** A dispatcher turn's lines before `Request:`, so request text that copies a header line matches nothing. */
+function headerOf(turn: string): string[] {
+  return (turn.split("\nRequest:\n")[0] ?? "").split("\n");
 }
 
 function message(error: unknown): string {

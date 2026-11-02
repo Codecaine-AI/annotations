@@ -10,7 +10,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (GlobalRegistrator.isRegistered) await GlobalRegistrator.unregister();
 
 import { FakeDocs } from "../test/fake-docs-server";
-import { Dispatcher, MARKER } from "./dispatcher";
+import { Dispatcher, MARKER, sendingMarker, threadTitle } from "./dispatcher";
 import { DocsSource } from "./docs";
 import { T3 } from "./t3";
 
@@ -24,6 +24,11 @@ const BROKEN_PAGE = "guides/retries";
 const BROKEN_TITLE = "Retries Guide";
 const RACE_PAGE = "guides/race";
 const RACE_TITLE = "Race Guide";
+const RECOVER_PAGE = "guides/recover";
+const RECOVER_TITLE = "Recover Guide";
+const TWIN_PAGE = "guides/twin";
+const OTHER_TWIN_PAGE = "archive/twin";
+const TWIN_TITLE = "Twin Guide";
 
 type Call = { args: string[]; stdin: string };
 
@@ -65,7 +70,12 @@ beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "dispatcher-test-"));
   process.env.T3_FAKE_STATE = state;
   process.env.PATH = `${join(import.meta.dir, "..", "test", "bin")}:${process.env.PATH}`;
-  fake = new FakeDocs({ [PAGE]: TITLE, [SETUP_PAGE]: SETUP_TITLE, [BROKEN_PAGE]: BROKEN_TITLE, [RACE_PAGE]: RACE_TITLE });
+  fake = new FakeDocs({
+    [PAGE]: TITLE, [SETUP_PAGE]: SETUP_TITLE, [BROKEN_PAGE]: BROKEN_TITLE, [RACE_PAGE]: RACE_TITLE,
+    [RECOVER_PAGE]: RECOVER_TITLE,
+    [TWIN_PAGE]: TWIN_TITLE,
+    [OTHER_TWIN_PAGE]: TWIN_TITLE,
+  });
   stop = await startDispatcher();
 });
 
@@ -146,12 +156,17 @@ test("a request written outside the API is dispatched when the page's file chang
   expect(send?.stdin).toContain("Link the glossary from the intro");
 });
 
-test("on start it dispatches open requests filed while it was down and reuses a thread titled after the page", async () => {
+test("on start it dispatches open requests filed while it was down and reuses the page's thread found by title and target", async () => {
   await stop();
   const pending = fake.seed(SETUP_PAGE, { body: "Document the install", intent: "agent-request", author: "ford" });
   const resolved = fake.seed(SETUP_PAGE, { body: "Old request", intent: "agent-request", author: "ford", status: "resolved" });
   const note = fake.seed(SETUP_PAGE, { body: "Just a note", intent: "note", author: "ford" });
-  const handMade = { threadId: "11111111-2222-4333-8444-555555555555", title: `${SETUP_TITLE} · docs`, status: "completed" };
+  const handMade = {
+    threadId: "11111111-2222-4333-8444-555555555555",
+    title: `${SETUP_TITLE} · docs`,
+    status: "completed",
+    messages: [{ role: "user", text: `Annotation: ${resolved.id}\nTarget: ${SETUP_PAGE}\nDelivery: request\nRequest:\nOld request` }],
+  };
   const threads = JSON.parse(readFileSync(join(state, "threads.json"), "utf8")) as unknown[];
   writeFileSync(join(state, "threads.json"), JSON.stringify([handMade, ...threads]));
 
@@ -267,4 +282,33 @@ test("a request whose thread start failed is sent to the thread another request 
   expect(turns[1]?.args[2]).toBe(threadId);
   expect(fake.annotation(failed.id).thread?.id).toBe(threadId);
   expect(sentMarkers(failed.id)[0]?.body).not.toContain("restart");
+});
+
+test("after a restart, a delivery whose Sending marker landed but whose turn never reached T3 is sent once", async () => {
+  const bound = await fake.file(RECOVER_PAGE, "Explain recovery", "ford");
+  await fake.whenever(() => sentMarkers(bound.id).length === 1);
+  const threadId = fake.annotation(bound.id).thread?.id ?? "";
+
+  // The dispatcher died after writing the Sending marker and before `t3 thread send`.
+  await stop();
+  const lost = fake.seed(RECOVER_PAGE, { body: "Add the crash window", intent: "agent-request", author: "ford" });
+  fake.inject(RECOVER_PAGE, lost.id, sendingMarker(threadTitle("docs", RECOVER_TITLE), threadId, "request"), "system");
+  expect(turnsFor(lost.id)).toHaveLength(0);
+
+  stop = await startDispatcher();
+  await fake.whenever(() => sentMarkers(lost.id).length === 1);
+  expect(turnsFor(lost.id).map((call) => call.args.slice(1, 3))).toEqual([["send", threadId]]);
+  expect(sentMarkers(lost.id)[0]?.body).not.toContain("restart");
+});
+
+test("two pages with the same title each get their own thread", async () => {
+  const first = await fake.file(TWIN_PAGE, "Rename the steps", "ford");
+  await fake.whenever(() => sentMarkers(first.id).length === 1);
+  const second = await fake.file(OTHER_TWIN_PAGE, "Mark this archived", "ford");
+  await fake.whenever(() => sentMarkers(second.id).length === 1);
+
+  const firstThread = fake.annotation(first.id).thread?.id ?? "";
+  expect(turnsFor(second.id).map((call) => call.args[1])).toEqual(["start"]);
+  expect(fake.annotation(second.id).thread?.id).not.toBe(firstThread);
+  expect(fake.annotation(second.id).thread?.title).toBe(`${TWIN_TITLE} · docs`);
 });

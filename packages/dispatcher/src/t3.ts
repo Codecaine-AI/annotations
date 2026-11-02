@@ -1,5 +1,5 @@
 /**
- * The T3 Code CLI (`t3 thread ...`) as four calls. The CLI acts on the
+ * The T3 Code CLI (`t3 thread ...`) as five calls. The CLI acts on the
  * running T3 Code server on this host and needs no token.
  */
 
@@ -40,6 +40,18 @@ export class T3 {
     if (result.code === 0) return "alive";
     if (/no longer available|not found/i.test(result.stderr + result.stdout)) return "gone";
     return this.fail(`t3 thread show ${threadId}`, result);
+  }
+
+  /** The text of every user turn in a thread, oldest first, or "gone" when the thread no longer exists. Throws when the server cannot answer. */
+  async userTurns(threadId: string): Promise<string[] | "gone"> {
+    const result = await this.run(["thread", "show", threadId, "--json", "--messages", "100000"]);
+    if (result.code !== 0) {
+      if (/no longer available|not found/i.test(result.stderr + result.stdout)) return "gone";
+      return this.fail(`t3 thread show ${threadId}`, result);
+    }
+    const parsed = JSON.parse(result.stdout) as { messages?: { role?: unknown; text?: unknown }[] };
+    if (!Array.isArray(parsed.messages)) throw new Error(`t3 thread show ${threadId} printed no messages`);
+    return parsed.messages.flatMap((message) => (message.role === "user" && typeof message.text === "string" ? [message.text] : []));
   }
 
   /** A project's threads, newest first. */
