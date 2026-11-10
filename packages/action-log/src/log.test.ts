@@ -42,11 +42,11 @@ afterEach(() => {
 test("two threads edit one board: each thread's query returns only its own edits, the board's query returns both", () => {
   const log = openTemp();
   log.record({ runId: "run-a", threadId: THREAD_A, agent: "claude-code", tool: "place_shape", target: BOARD, result: "ok", snapshotId: "snap-1", at: T0 });
-  log.record({ runId: "run-b", threadId: THREAD_B, agent: "codex", tool: "move_to", target: BOARD, result: "ok, 1 finding", at: T1 });
+  log.record({ runId: "run-b", threadId: THREAD_B, agent: "codex", tool: "move", target: BOARD, result: "ok, 1 finding", at: T1 });
   log.record({ runId: "run-a", threadId: THREAD_A, agent: "claude-code", tool: "connect", target: BOARD, result: "refused: stale board", at: T2 });
 
   expect(log.query({ threadId: THREAD_A }).map((r) => r.tool)).toEqual(["place_shape", "connect"]);
-  expect(log.query({ threadId: THREAD_B }).map((r) => [r.tool, r.agent, r.snapshotId])).toEqual([["move_to", "codex", null]]);
+  expect(log.query({ threadId: THREAD_B }).map((r) => [r.tool, r.agent, r.snapshotId])).toEqual([["move", "codex", null]]);
   expect(log.query({ target: BOARD }).map((r) => r.threadId)).toEqual([THREAD_A, THREAD_B, THREAD_A]);
   expect(log.query({ target: "canvases/other" })).toEqual([]);
 });
