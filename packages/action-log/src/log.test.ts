@@ -53,7 +53,7 @@ test("two threads edit one board: each thread's query returns only its own edits
 
 test("a record with only a run id joins its thread once the begin tool binds the run", () => {
   const log = openTemp();
-  log.record({ runId: "run-x", agent: "codex", tool: "docs_discover", target: "docs", result: "3 projects", at: T0 });
+  log.record({ runId: "run-x", agent: "codex", tool: "docs_capabilities", target: "docs", result: "3 projects", at: T0 });
   expect(log.query({ threadId: THREAD_A })).toEqual([]);
   expect(log.query({ runId: "run-x" })[0]?.threadId).toBeNull();
 
@@ -61,7 +61,7 @@ test("a record with only a run id joins its thread once the begin tool binds the
   log.record({ runId: "run-x", agent: "codex", tool: "docs_begin", target: "docs/page", result: "task t1", snapshotId: "snap-2", at: T1 });
 
   const byThread = log.query({ threadId: THREAD_A });
-  expect(byThread.map((r) => [r.tool, r.threadId])).toEqual([["docs_discover", THREAD_A], ["docs_begin", THREAD_A]]);
+  expect(byThread.map((r) => [r.tool, r.threadId])).toEqual([["docs_capabilities", THREAD_A], ["docs_begin", THREAD_A]]);
   // Binding again is a no-op, and the first binding wins over a later, different one.
   expect(log.bindThread("run-x", THREAD_A)).toBe(THREAD_A);
   expect(log.bindThread("run-x", THREAD_B)).toBe(THREAD_A);
