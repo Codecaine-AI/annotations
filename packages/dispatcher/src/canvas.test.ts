@@ -63,7 +63,7 @@ test("a board request starts a thread in the canvas project, binds it, and posts
   expect(flag(start, "--title")).toBe(`${TITLE} · canvas`);
   expect(flag(start, "--provider")).toBe(MODEL.provider);
   expect(flag(start, "--model")).toBe(MODEL.model);
-  for (const fact of ["Load the canvas skill", id, BOARD, `${fake.dir}/${BOARD}.canvas.json`, "Group the retry boxes", "reply_annotation", "resolve_request"]) {
+  for (const fact of ["Load the canvas skill", id, BOARD, `${fake.dir}/${BOARD}.canvas.json`, "Group the retry boxes", "annotate", "resolve_request"]) {
     expect(start?.stdin).toContain(fact);
   }
 

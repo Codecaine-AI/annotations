@@ -118,7 +118,7 @@ export class CanvasSource implements Source {
       "Load the canvas skill before you start.",
       "",
       lead,
-      `Open the board with canvas_open (canvas id "${facts.target}"${file ? ` or file ${file}` : ""}), do the work, then answer through the canvas MCP request tools: reply with reply_annotation using id "${facts.annotationId}", and close the request with resolve_request when it is done.`,
+      `Open the board with canvas_open (canvas id "${facts.target}"${file ? ` or file ${file}` : ""}), do the work, then answer through the canvas MCP request tools: reply with annotate using thread "${facts.annotationId}", and close the request with resolve_request when it is done.`,
       ...messageTail(facts, [`Board: ${facts.target}`, ...(file ? [`File: ${file}`] : [])]),
     ].join("\n");
   }
