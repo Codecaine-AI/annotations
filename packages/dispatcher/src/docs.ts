@@ -133,7 +133,9 @@ export class DocsSource implements Source {
       "Load the docs-system skill before you start.",
       "",
       lead,
-      `Read the page with the docs MCP tools, do the work, then answer through the docs MCP annotation tools: reply with docs_annotation_reply using author "agent" and annotation_id "${facts.annotationId}", and resolve the annotation with docs_annotation_resolve when the request is done.`,
+      `Read the page with the docs MCP tools, do the work, then answer with docs_annotation_write. Each call sends exactly one mode, plus project, path, task_id and the current expected_annotations_hash from docs_annotations.`,
+      `To reply, send reply: { annotation_id: "${facts.annotationId}", body: "<your answer>", author: "agent" }.`,
+      `When the request is done, resolve it in a second call with resolve: { annotation_id: "${facts.annotationId}" }.`,
       ...messageTail(facts, [`Page: ${facts.target}`]),
     ].join("\n");
   }
