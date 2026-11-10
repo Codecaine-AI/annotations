@@ -130,7 +130,7 @@ export class DocsSource implements Source {
         ? `A human filed a request on the docs page "${facts.title}" (${facts.target}).`
         : `A human replied on the docs page "${facts.title}" (${facts.target}).`;
     return [
-      "Load the docs-system skill before you start.",
+      'Call docs_capabilities first for the project id and the guidance topics. Topic "workflow" holds the steps for a request.',
       "",
       lead,
       `Read the page with the docs MCP tools, do the work, then answer with docs_annotation_write. Each call sends exactly one mode, plus project, path, task_id and the current expected_annotations_hash from docs_annotations.`,
