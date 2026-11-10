@@ -93,7 +93,14 @@ test("a request on a page with no thread starts one, binds it, and tells the Lab
   expect(start?.args[start.args.indexOf("--title") + 1]).toBe(`${TITLE} · docs`);
   expect(start?.args[start.args.indexOf("--provider") + 1]).toBe(MODEL.provider);
   expect(start?.args[start.args.indexOf("--model") + 1]).toBe(MODEL.model);
-  for (const fact of ["docs-system", id, PAGE, "Rewrite the intro", "docs_annotation_reply"]) {
+  for (const fact of [
+    "docs-system",
+    PAGE,
+    "Rewrite the intro",
+    "docs_annotation_write",
+    `reply: { annotation_id: "${id}"`,
+    `resolve: { annotation_id: "${id}" }`,
+  ]) {
     expect(start?.stdin).toContain(fact);
   }
 
