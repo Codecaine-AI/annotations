@@ -58,7 +58,7 @@ export interface Source {
   setThread(target: string, annotationId: string, thread: AnnotationThread): Promise<void>;
   /** Posts a `system` reply on the annotation. */
   reply(target: string, annotationId: string, body: string): Promise<void>;
-  /** The thread's message: the skill to load, where the request is, and how to answer. */
+  /** The thread's message: the first step, where the request is, and how to answer. */
   message(facts: RequestFacts): string;
 }
 

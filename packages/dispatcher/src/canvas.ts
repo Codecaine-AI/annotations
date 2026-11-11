@@ -115,10 +115,10 @@ export class CanvasSource implements Source {
         ? `A human filed a request on the board "${facts.title}" (${facts.target}).`
         : `A human replied on the board "${facts.title}" (${facts.target}).`;
     return [
-      "Load the canvas skill before you start.",
+      'Call canvas_capabilities first for the tools and the guidance topics. Read topic "workflow" with canvas_guidance before your first edit.',
       "",
       lead,
-      `Open the board with canvas_open (canvas id "${facts.target}"${file ? ` or file ${file}` : ""}), do the work, then answer through the canvas MCP request tools: reply with reply_annotation using id "${facts.annotationId}", and close the request with resolve_request when it is done.`,
+      `Open the board with canvas_open (canvas id "${facts.target}"${file ? ` or file ${file}` : ""}), do the work, then answer through the canvas MCP request tools: reply with annotate using thread "${facts.annotationId}", and close the request with resolve_request when it is done.`,
       ...messageTail(facts, [`Board: ${facts.target}`, ...(file ? [`File: ${file}`] : [])]),
     ].join("\n");
   }

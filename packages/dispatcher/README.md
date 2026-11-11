@@ -21,10 +21,10 @@ lookup, the `t3` calls and the backoff are shared (`src/dispatcher.ts`).
 | Startup scan | every page in `/api/tree` | every board in `/api/canvases` | every prompt `prompts_discover` finds in `promptWorkspace` |
 | T3 project | `t3Project`: the repo that owns the pages | `canvasT3Project`: the canvas repo | `promptT3Project`: the prompt-kit repo |
 | Thread title | `<page title> · docs` | `<board title> · canvas` | `<prompt title from the catalog> · prompt` |
-| Skill | `docs-system` | `canvas` | `prompt-kit` |
-| Agent answers with | `docs_annotation_write` with `reply`, then `resolve` | `reply_annotation`, `resolve_request` | `prompts_request_reply`, `prompts_request_resolve` |
+| First step | call `docs_capabilities`, and topic `workflow` holds the steps | call `canvas_capabilities`, then read topic `workflow` | load the `prompt-kit` skill |
+| Agent answers with | `docs_annotation_write` with `reply`, then `resolve` | `annotate` with `thread`, then `resolve_request` | `prompts_request_reply`, `prompts_request_resolve` |
 
-- **First message.** The skill to load, the annotation id, the page, board or
+- **First message.** The first step, the annotation id, the page, board or
   prompt, the request body, and the MCP tools to answer with.
 - **Host.** One launchd user agent on command-center, label
   `ai.codecaine.dispatcher`, beside the docs daemon.
