@@ -143,7 +143,7 @@ export class PromptSource implements Source {
         ? `A human filed a request on the prompt "${facts.title}" (${facts.target}).`
         : `A human replied on the prompt "${facts.title}" (${facts.target}).`;
     return [
-      "Load the prompt-kit skill before you start.",
+      'Call prompts_capabilities first for the project id and the guidance topics. Read topic "standards" with prompts_guidance and your task_id before your first edit, and topic "work-requests" holds the steps for a request.',
       "",
       lead,
       `Find the prompt with prompts_discover, passing project to list one project's prompts. Call prompts_begin, and read the request with prompts_requests. Do the work, then answer through the prompt-kit MCP request tool: reply with prompts_request_reply using request_id "${facts.annotationId}", and close the request with prompts_request_reply and close: true when it is done.`,

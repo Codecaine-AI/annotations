@@ -21,7 +21,7 @@ lookup, the `t3` calls and the backoff are shared (`src/dispatcher.ts`).
 | Startup scan | every page in `/api/tree` | every board in `/api/canvases` | every prompt `prompts_discover` finds in `promptWorkspace` |
 | T3 project | `t3Project`: the repo that owns the pages | `canvasT3Project`: the canvas repo | `promptT3Project`: the prompt-kit repo |
 | Thread title | `<page title> · docs` | `<board title> · canvas` | `<prompt title from the catalog> · prompt` |
-| First step | call `docs_capabilities`, and topic `workflow` holds the steps | call `canvas_capabilities`, then read topic `workflow` | load the `prompt-kit` skill |
+| First step | call `docs_capabilities`, and topic `workflow` holds the steps | call `canvas_capabilities`, then read topic `workflow` | call `prompts_capabilities`, then read topic `standards`, and topic `work-requests` holds the steps |
 | Agent answers with | `docs_annotation_write` with `reply`, then `resolve` | `annotate` with `thread`, then `resolve_request` | `prompts_request_reply`, then `prompts_request_reply` with `close` |
 
 - **First message.** The first step, the annotation id, the page, board or
