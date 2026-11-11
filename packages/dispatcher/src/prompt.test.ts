@@ -82,7 +82,7 @@ test("a prompt request starts a thread in the prompt-kit project, binds it, and 
   const start = t3.callsOf("start")[0];
   expect(start?.args.slice(0, 4)).toEqual(["thread", "start", PROJECT, "-"]);
   expect(flag(start, "--title")).toBe(`${TITLE} · prompt`);
-  for (const fact of ["Load the prompt-kit skill", id, PROMPT, fake.root, "Make the tone warmer", "prompts_request_reply", "prompts_request_resolve"]) {
+  for (const fact of ["Load the prompt-kit skill", id, PROMPT, fake.root, "Make the tone warmer", "prompts_discover, passing project", "prompts_request_reply", "close: true"]) {
     expect(start?.stdin).toContain(fact);
   }
 
