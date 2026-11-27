@@ -179,6 +179,19 @@ describe("AnnotationComposerPopover", () => {
     });
   });
 
+  it("fires onCancel from the header X button", () => {
+    let cancelled = false;
+    render(
+      <Host
+        onCancel={() => {
+          cancelled = true;
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Cancel"));
+    expect(cancelled).toBe(true);
+  });
+
   it("injects the self-contained stylesheet alongside the popover", () => {
     render(<Host />);
     const style = document.querySelector('style[data-annotation-ui="style"]');

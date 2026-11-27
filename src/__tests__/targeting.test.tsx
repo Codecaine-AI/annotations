@@ -191,6 +191,24 @@ describe("TargetingLayer", () => {
     expect(selectedRing()).toBeFalsy();
   });
 
+  it("renders both rings with dotted borders (the selection affordance)", () => {
+    render(
+      <Surface
+        resolveSelected={() => {
+          const element = document.querySelector('[data-testblock="p2"]');
+          return element instanceof HTMLElement ? [element] : null;
+        }}
+      />,
+    );
+    fireEvent.mouseMove(screen.getByText("First paragraph"));
+
+    const hover = hoverRing() as HTMLElement;
+    const selected = selectedRing() as HTMLElement;
+    expect(hover.style.borderStyle).toBe("dotted");
+    expect(selected.style.borderStyle).toBe("dotted");
+    expect(TARGETING_CSS).toContain("border-style: dotted");
+  });
+
   it("gives every ring a dotted border and NO background fill", () => {
     // The dotted border is the whole affordance — a tinted fill washed out
     // the very content being targeted, so no ring paints a background.
@@ -243,6 +261,24 @@ describe("TargetingLayer", () => {
     const style = document.querySelector('style[data-annotation-ui="style"]');
     expect(style?.textContent).toContain("2px dotted");
     expect(style?.textContent).toContain("[data-annotation-composer]");
+  });
+
+  it("marks overlays with the styling data attributes the injected CSS keys off", () => {
+    render(
+      <Surface
+        resolveSelected={() => {
+          const element = document.querySelector('[data-testblock="p2"]');
+          return element instanceof HTMLElement ? [element] : null;
+        }}
+      />,
+    );
+    fireEvent.mouseMove(screen.getByText("First paragraph"));
+
+    expect((hoverRing() as HTMLElement).hasAttribute("data-annotation-ring")).toBe(true);
+    expect((hoverChip() as HTMLElement).hasAttribute("data-annotation-chip")).toBe(true);
+    expect(
+      (selectedRing() as HTMLElement).hasAttribute("data-annotation-ring-selected"),
+    ).toBe(true);
   });
 
   it("suppressHover hides the hover overlays and skips resolution but keeps the selected ring", () => {
