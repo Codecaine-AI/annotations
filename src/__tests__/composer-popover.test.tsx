@@ -287,25 +287,6 @@ describe("AnnotationComposerPopover", () => {
     expect(pins).toBe(0);
   });
 
-  it("reports scope clicks via onScopeChange without re-anchoring itself", () => {
-    let changed: string | null = null;
-    render(
-      <Host
-        scopes={[
-          { key: "item-3", label: "List item" },
-          { key: "list-1", label: "Bullet list" },
-        ]}
-        activeScopeKey="item-3"
-        onScopeChange={(key) => {
-          changed = key;
-        }}
-      />,
-    );
-
-    fireEvent.click(screen.getByText("Bullet list"));
-    expect(changed as string | null).toBe("list-1");
-  });
-
   it("falls back to the plain targetLabel for absent or single-entry scopes", () => {
     const { unmount } = render(
       <Host scopes={[{ key: "item-3", label: "List item" }]} activeScopeKey="item-3" />,

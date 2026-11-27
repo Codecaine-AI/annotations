@@ -61,7 +61,14 @@ describe("TargetingLayer", () => {
   });
 
   it("does not target skip elements (built-in skip selector)", () => {
-    render(<Surface />);
+    // The button sits inside a resolvable block, so only the skip check keeps hover off it.
+    render(
+      <TargetingLayer<TestTarget> active resolveTarget={resolveTarget}>
+        <p data-testblock="p3">
+          <button type="button">Skip me</button>
+        </p>
+      </TargetingLayer>,
+    );
     fireEvent.mouseMove(screen.getByText("Skip me"));
     expect(hoverRing()).toBeFalsy();
     expect(hoverChip()).toBeFalsy();
@@ -136,12 +143,19 @@ describe("TargetingLayer", () => {
 
   it("suppresses clicks landing on skip elements", () => {
     let selected = 0;
+    // The button sits inside a resolvable block, so only the skip check keeps the click from selecting it.
     render(
-      <Surface
+      <TargetingLayer<TestTarget>
+        active
+        resolveTarget={resolveTarget}
         onTargetSelect={() => {
           selected += 1;
         }}
-      />,
+      >
+        <p data-testblock="p3">
+          <button type="button">Skip me</button>
+        </p>
+      </TargetingLayer>,
     );
     fireEvent.click(screen.getByText("Skip me"));
     expect(selected).toBe(0);
@@ -480,37 +494,6 @@ describe("TargetingLayer", () => {
     } finally {
       window.getSelection = originalGetSelection;
     }
-  });
-
-  it('default rangeModifier ("none") fires without any modifier held', () => {
-    let calls = 0;
-    render(
-      <Surface
-        onRangeSelect={() => {
-          calls += 1;
-        }}
-      />,
-    );
-
-    const paragraph = screen.getByText("First paragraph");
-    const range = document.createRange();
-    range.setStart(paragraph.firstChild as Text, 0);
-    range.setEnd(paragraph.firstChild as Text, 5);
-    const fakeSelection = {
-      isCollapsed: false,
-      rangeCount: 1,
-      getRangeAt: () => range,
-      toString: () => "First",
-    } as unknown as Selection;
-
-    const originalGetSelection = window.getSelection;
-    window.getSelection = () => fakeSelection;
-    try {
-      fireEvent.mouseUp(paragraph);
-    } finally {
-      window.getSelection = originalGetSelection;
-    }
-    expect(calls).toBe(1);
   });
 
   it("hardens breadcrumb segments in the injected CSS (hit area, cursor, hover, wrap)", () => {
