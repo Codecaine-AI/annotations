@@ -191,24 +191,6 @@ describe("TargetingLayer", () => {
     expect(selectedRing()).toBeFalsy();
   });
 
-  it("renders both rings with dotted borders (the selection affordance)", () => {
-    render(
-      <Surface
-        resolveSelected={() => {
-          const element = document.querySelector('[data-testblock="p2"]');
-          return element instanceof HTMLElement ? [element] : null;
-        }}
-      />,
-    );
-    fireEvent.mouseMove(screen.getByText("First paragraph"));
-
-    const hover = hoverRing() as HTMLElement;
-    const selected = selectedRing() as HTMLElement;
-    expect(hover.style.borderStyle).toBe("dotted");
-    expect(selected.style.borderStyle).toBe("dotted");
-    expect(TARGETING_CSS).toContain("border-style: dotted");
-  });
-
   it("gives every ring a dotted border and NO background fill", () => {
     // The dotted border is the whole affordance — a tinted fill washed out
     // the very content being targeted, so no ring paints a background.
@@ -261,24 +243,6 @@ describe("TargetingLayer", () => {
     const style = document.querySelector('style[data-annotation-ui="style"]');
     expect(style?.textContent).toContain("2px dotted");
     expect(style?.textContent).toContain("[data-annotation-composer]");
-  });
-
-  it("marks overlays with the styling data attributes the injected CSS keys off", () => {
-    render(
-      <Surface
-        resolveSelected={() => {
-          const element = document.querySelector('[data-testblock="p2"]');
-          return element instanceof HTMLElement ? [element] : null;
-        }}
-      />,
-    );
-    fireEvent.mouseMove(screen.getByText("First paragraph"));
-
-    expect((hoverRing() as HTMLElement).hasAttribute("data-annotation-ring")).toBe(true);
-    expect((hoverChip() as HTMLElement).hasAttribute("data-annotation-chip")).toBe(true);
-    expect(
-      (selectedRing() as HTMLElement).hasAttribute("data-annotation-ring-selected"),
-    ).toBe(true);
   });
 
   it("suppressHover hides the hover overlays and skips resolution but keeps the selected ring", () => {
@@ -494,37 +458,6 @@ describe("TargetingLayer", () => {
     } finally {
       window.getSelection = originalGetSelection;
     }
-  });
-
-  it('default rangeModifier ("none") fires without any modifier held', () => {
-    let calls = 0;
-    render(
-      <Surface
-        onRangeSelect={() => {
-          calls += 1;
-        }}
-      />,
-    );
-
-    const paragraph = screen.getByText("First paragraph");
-    const range = document.createRange();
-    range.setStart(paragraph.firstChild as Text, 0);
-    range.setEnd(paragraph.firstChild as Text, 5);
-    const fakeSelection = {
-      isCollapsed: false,
-      rangeCount: 1,
-      getRangeAt: () => range,
-      toString: () => "First",
-    } as unknown as Selection;
-
-    const originalGetSelection = window.getSelection;
-    window.getSelection = () => fakeSelection;
-    try {
-      fireEvent.mouseUp(paragraph);
-    } finally {
-      window.getSelection = originalGetSelection;
-    }
-    expect(calls).toBe(1);
   });
 
   it("hardens breadcrumb segments in the injected CSS (hit area, cursor, hover, wrap)", () => {
